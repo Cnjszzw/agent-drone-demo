@@ -10,7 +10,10 @@ load_dotenv()
 
 class LLMConfig:
     api_key = os.getenv("DEEPSEEK_API_KEY", "your-api-key-here")
-    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    # DeepSeek 新版 base_url 不含 /v1，OpenAI SDK 会自动补全路径
+    # 旧版 https://api.deepseek.com/v1 仍兼容，但官方推荐不带 /v1
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    # deepseek-chat 将于 2026/07/24 弃用，届时改为 deepseek-v4-pro
     model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     temperature = 0.1  # 低温度保证指令解析的稳定性
     max_tokens = 2048
