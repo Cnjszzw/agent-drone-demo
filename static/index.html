@@ -162,26 +162,31 @@
     font-size:13px;color:var(--text);
   }
   .plan-card .step .step-icon{
-    width:26px;height:26px;border-radius:50%;display:flex;
+    width:28px;height:28px;border-radius:50%;display:flex;
     align-items:center;justify-content:center;
-    font-family:var(--font-mono);font-size:10px;flex-shrink:0;
-    transition:all .3s;
+    font-family:var(--font-mono);font-size:11px;flex-shrink:0;
+    transition:all .3s;position:relative;
   }
   .plan-card .step .step-icon.pending{
     border:1.5px solid var(--border);color:var(--text-muted);
-    background:rgba(255,255,255,.01);
+    background:rgba(255,255,255,.02);
   }
   .plan-card .step .step-icon.running{
-    border:1.5px solid var(--cyan);color:var(--cyan);
-    animation:spin .8s linear infinite;box-shadow:0 0 8px var(--cyan-glow);
+    border:2px solid var(--cyan);color:var(--cyan);
+    background:rgba(0,200,232,.08);
+  }
+  .plan-card .step .step-icon.running::after{
+    content:'';position:absolute;inset:-3px;border-radius:50%;
+    border:2px solid transparent;border-top-color:var(--cyan);
+    animation:spin .7s linear infinite;
   }
   .plan-card .step .step-icon.done{
-    background:var(--green);color:#0a0d12;border:1.5px solid var(--green);
-    box-shadow:0 0 6px var(--green-glow);
+    background:var(--green);color:#0a0d12;border:2px solid var(--green);
+    box-shadow:0 0 8px var(--green-glow);font-size:15px;font-weight:700;
   }
   .plan-card .step .step-icon.fail{
-    background:var(--red);color:#fff;border:1.5px solid var(--red);
-    box-shadow:0 0 6px var(--red-glow);
+    background:var(--red);color:#fff;border:2px solid var(--red);
+    box-shadow:0 0 8px var(--red-glow);font-size:14px;font-weight:700;
   }
   @keyframes spin{to{transform:rotate(360deg)}}
   .plan-card .step .step-desc{flex:1;font-size:13px}
