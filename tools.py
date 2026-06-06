@@ -286,9 +286,93 @@ def panorama_photo() -> str:
 
 
 @tool
+def set_exposure_mode(mode: str) -> str:
+    """
+    切换相机曝光模式。
+
+    对应 WVP: CameraModeSwitchImpl (exposure sub-mode)
+
+    Args:
+        mode: 'auto'=自动曝光（可调节 ISO/快门/曝光补偿）
+              'manual'=手动曝光（锁定参数，不可调节）
+    """
+    logger.info("☀️ 曝光模式: %s", mode)
+
+    if mode not in ("auto", "manual"):
+        return "❌ 不支持的曝光模式: 仅支持 auto（自动）和 manual（手动）"
+
+    return executor.set_exposure_mode(mode)
+
+
+@tool
+def set_iso(value: int) -> str:
+    """
+    设置相机 ISO 感光度。仅在自动曝光模式下可用。
+
+    对应 WVP: 相机参数控制
+
+    Args:
+        value: ISO 值，范围 100-25600
+    """
+    logger.info("📸 ISO: %d", value)
+
+    if executor.exposure_mode == "manual":
+        return ("❌ 当前为手动曝光模式，无法调节 ISO。"
+                "请先调用 set_exposure_mode('auto') 切换到自动曝光模式")
+
+    if value < 100 or value > 25600:
+        return f"❌ ISO {value} 超出范围，支持 100-25600"
+
+    return executor.set_iso(value)
+
+
+@tool
+def set_shutter_speed(speed: str) -> str:
+    """
+    设置相机快门速度。仅在自动曝光模式下可用。
+
+    对应 WVP: 相机参数控制
+
+    Args:
+        speed: 快门速度，如 '1/60' '1/100' '1/500' '1/1000'
+    """
+    logger.info("📸 快门: %s", speed)
+
+    if executor.exposure_mode == "manual":
+        return ("❌ 当前为手动曝光模式，无法调节快门。"
+                "请先调用 set_exposure_mode('auto') 切换到自动曝光模式")
+
+    return executor.set_shutter_speed(speed)
+
+
+@tool
+def set_ev_compensation(ev: float) -> str:
+    """
+    设置曝光补偿，用于调整画面亮度。仅在自动曝光模式下可用。
+    正值变亮，负值变暗。
+
+    对应 WVP: 相机参数控制
+
+    Args:
+        ev: 曝光补偿值，范围 -3.0 ~ +3.0
+    """
+    logger.info("📸 曝光补偿: %+.1fEV", ev)
+
+    if executor.exposure_mode == "manual":
+        return ("❌ 当前为手动曝光模式，无法调节曝光补偿。"
+                "请先调用 set_exposure_mode('auto') 切换到自动曝光模式")
+
+    if ev < -3.0 or ev > 3.0:
+        return f"❌ 曝光补偿 {ev}EV 超出范围，支持 -3.0 ~ +3.0"
+
+    return executor.set_ev_compensation(ev)
+
+
+@tool
 def get_camera_status() -> str:
     """
-    查询相机当前参数，包括镜头类型、变焦倍数、录像状态、存储空间等。
+    查询相机当前参数，包括镜头、变焦、曝光模式、ISO、快门、
+    曝光补偿、录像状态、存储空间等。
 
     对应 WVP: manage 模块相机遥测数据
     """
@@ -319,6 +403,10 @@ ALL_TOOLS = [
     panorama_photo,
     set_zoom,
     switch_lens,
+    set_exposure_mode,
+    set_iso,
+    set_shutter_speed,
+    set_ev_compensation,
     return_home,
     gimbal_control,
     get_drone_status,

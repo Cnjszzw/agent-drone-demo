@@ -95,6 +95,10 @@ class MockExecutor:
         # 相机状态
         self.zoom_level = 1.0       # 变焦倍数（1x-56x）
         self.lens_mode = "zoom"     # wide / zoom / ir
+        self.exposure_mode = "auto" # auto / manual（只有 auto 下可调参数）
+        self.iso = 100              # ISO 100-25600
+        self.shutter_speed = "1/60" # 快门速度
+        self.ev_compensation = 0.0  # 曝光补偿 -3.0 ~ +3.0
 
     # ==================== Redis 模拟接口 ====================
 
@@ -434,18 +438,67 @@ class MockExecutor:
 
     # ==================== 相机状态查询 ====================
 
+    # ==================== 曝光控制 ====================
+
+    def set_exposure_mode(self, mode: str) -> str:
+        """
+        切换曝光模式。auto=自动曝光，manual=手动曝光。
+        只有在 auto 模式下才能调节 ISO/快门/曝光补偿。
+        对应 WVP: CameraModeSwitchImpl (exposure sub-mode)
+        """
+        topic = f"dji/device/{self.device_id}/camera/exposure/mode"
+        payload = f'{{"msgId":"{self._msg_id()}","mode":"{mode}"}}'
+        self._print_mqtt(topic, payload)
+        self._progress("曝光模式切换", 1)
+        self.exposure_mode = mode
+        desc = "自动曝光" if mode == "auto" else "手动曝光"
+        return f"✅ 已切换为 {desc}"
+
+    def set_iso(self, value: int) -> str:
+        """设置 ISO（仅在自动曝光模式下可用）"""
+        topic = f"dji/device/{self.device_id}/camera/iso"
+        payload = f'{{"msgId":"{self._msg_id()}","iso":{value}}}'
+        self._print_mqtt(topic, payload)
+        self._progress("ISO 调节", 1)
+        self.iso = value
+        return f"✅ ISO 已设置为 {value}"
+
+    def set_shutter_speed(self, speed: str) -> str:
+        """设置快门速度（仅在自动曝光模式下可用），如 '1/100' '1/500'"""
+        topic = f"dji/device/{self.device_id}/camera/shutter"
+        payload = f'{{"msgId":"{self._msg_id()}","shutter":"{speed}"}}'
+        self._print_mqtt(topic, payload)
+        self._progress("快门调节", 1)
+        self.shutter_speed = speed
+        return f"✅ 快门已设置为 {speed}s"
+
+    def set_ev_compensation(self, ev: float) -> str:
+        """设置曝光补偿（仅在自动曝光模式下可用），范围 -3.0 ~ +3.0"""
+        topic = f"dji/device/{self.device_id}/camera/ev"
+        payload = f'{{"msgId":"{self._msg_id()}","ev":{ev:.1f}}}'
+        self._print_mqtt(topic, payload)
+        self._progress("曝光补偿调节", 1)
+        self.ev_compensation = ev
+        return f"✅ 曝光补偿已设置为 {ev:+.1f}EV"
+
+    # ==================== 相机状态查询 ====================
+
     def get_camera_status(self) -> str:
         """查询相机当前参数"""
         lens = {"wide": "广角", "zoom": "变焦", "ir": "红外"}.get(
             self.lens_mode, self.lens_mode
         )
+        exp = "自动曝光" if self.exposure_mode == "auto" else "手动曝光"
         return (
             f"📷 相机状态 [{self.device_id}]:\n"
             f"  镜头: {lens}\n"
             f"  变焦: {self.zoom_level:.1f}x\n"
+            f"  曝光模式: {exp}\n"
+            f"  ISO: {self.iso}\n"
+            f"  快门: {self.shutter_speed}s\n"
+            f"  曝光补偿: {self.ev_compensation:+.1f}EV\n"
             f"  录像: {'进行中' if self.recording else '待机'}\n"
-            f"  存储: 可用 128GB / 256GB\n"
-            f"  SD 卡: 正常"
+            f"  存储: 可用 128GB / 256GB"
         )
 
     # ==================== 状态查询 ====================
