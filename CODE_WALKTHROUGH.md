@@ -1130,6 +1130,107 @@ Python Agent                       高德 MCP Server
 
 > "用户习惯说地名而不是 GPS 坐标。我们通过 MCP 协议接入了高德地图的官方 Server——`langchain-mcp-adapters` 一行 `MultiServerMCPClient` 完成握手，15 个地图工具自动注册为 LangChain Tool。Agent 在处理'飞到陆家嘴'这类指令时，会先调 `maps_geo` 做地理编码，拿到坐标后再调 `fly_to_point`。这比硬编码坐标列表或让 LLM 猜坐标都可靠。"
 
-#### 参考代码
+#### #### MCP 关键难点：地名歧义——多个候选坐标如何选
 
-详见 `mcp_tools.py`——完整 MCP 接入流程。配置 `AMAP_API_KEY` 后启动服务即可验证。申请地址：https://console.amap.com/dev/key/app
+maps_geo 查询"陆家嘴"返回了 6 个结果（云南·昆明、湖北·武汉、江西·鹰潭、江苏·南通、江苏·昆山、上海·浦东）。代码不能硬编码"取第一个"或"取最后一个"——高德 API 的排序逻辑在不同版本和地区可能不同。
+
+解决方案：将候选列表回传给 LLM，让 LLM 根据上下文语义选择：
+
+```
+maps_geo("陆家嘴") → 6 个候选
+  → 格式化为: "[0] 城市:昆明 区:西山 (102.69,25.00)
+                [1] 城市:武汉 区:武昌 (114.29,30.51)
+                ...
+                [5] 城市:上海 区:浦东 (121.50,31.23)"
+  → LLM 收到 prompt: "用户想飞到「陆家嘴」，高德返回了以下候选项，请选择最匹配的一个"
+  → LLM 输出: "5"
+  → 取候选[5]坐标填入 fly_to_point
+```
+
+**面试话术**：
+
+> "MCP 调用不是无脑的——地理编码返回多个候选项时，你不能硬编码取第几个。我们把候选列表格式化后回传给 LLM，让 LLM 根据上下文语义选择最佳匹配。比如'陆家嘴'有 6 个候选，LLM 理解用户大概率指的是上海浦东，选第 5 个。这比硬编码规则更可靠。"
+
+---
+
+### 7.8 Plan → Confirm → Execute 三段式流程
+
+> 面试时被问"Agent 和普通对话机器人有什么区别"——这就是关键差异。
+
+#### 设计：参照 DJI Copilot 交互模式
+
+DJI Copilot 的交互不是"用户说一句话→Agent 直接执行"——而是先生成任务规划卡片，用户审核步骤和参数后手动确认执行。高风险操作必须有人工确认环节。设计为三段式：
+
+**Phase 1: Plan（规划）**
+
+```
+POST /api/agent/plan
+
+LLM 收到用户指令 → 输出结构化 JSON:
+{
+  "objective": "飞往陆家嘴，变焦7倍后拍摄照片并返航",
+  "steps": [
+    {"description": "获取陆家嘴坐标", "tool": "maps_geo", "tool_args": {"address": "陆家嘴"}},
+    {"description": "飞向陆家嘴上空100m", "tool": "fly_to_point", "tool_args": {"lat": null, "lng": null, "height": 100}},
+    {"description": "设置7倍变焦", "tool": "set_zoom", "tool_args": {"factor": 7}},
+    {"description": "拍摄照片", "tool": "take_photo", "tool_args": {"count": 1}},
+    {"description": "返航降落", "tool": "return_home", "tool_args": {}}
+  ],
+  "preflight": {"return_altitude": "100m", "lost_action": "返航"}
+}
+```
+
+注意 `fly_to_point` 的坐标是 `null`——因为还未知，需要上一步 `maps_geo` 执行后填入。
+
+**Phase 2: Confirm（确认）**
+
+前端渲染规划确认卡片：任务目标 + 步骤列表（○所有步骤等待中）+ 飞前检查 + 两个按钮（取消 / 立即执行）。用户审核所有步骤和飞前检查项，确认无误后手动点击"立即执行"。
+
+**Phase 3: Execute（执行）**
+
+```
+POST /api/agent/execute  (SSE 流式)
+  → step_start(0): maps_geo("陆家嘴")
+  → step_done(0):  6 个候选 → LLM 选上海 → 坐标(121.50,31.23)
+  → step_start(1): fly_to_point(121.50,31.23,100)
+  → step_done(1):  ✅ 已到达（轮询 Redis 直到 completed）
+  → step_start(2): set_zoom(7)
+  → step_done(2):  ✅ 变焦完成
+  → ...
+  → all_done
+```
+
+#### 执行异常中止
+
+任何步骤失败后立即 `break`，不执行后续步骤：
+
+```python
+# app.py — execute 端点内
+try:
+    result = await tool_func.ainvoke(tool_args)
+    results.append(str(result))
+    yield step_done_event
+
+    # 工具返回 ❌ 或 ⛔ → 立即中止
+    if str(result).startswith(("❌", "⛔")):
+        break
+
+except Exception as e:
+    yield step_error_event
+    break  # 框架异常也中止
+```
+
+防止的场景：
+```
+fly_to_point 失败 → 无人机已悬停
+  → 如果不 break，后续会执行 set_zoom → take_photo → return_home
+  → 无人机已悬停时再发指令可能撞到障碍物
+```
+
+#### 面试话术
+
+> "我们参照 DJI Copilot，设计了 Plan → Confirm → Execute 三段式流程。LLM 先生成结构化任务计划——不是直接执行，而是让用户在确认卡片中审核。只有用户手动点击'执行'后，SSE 才开始推送每步状态。这个设计天然对应了 Human-in-the-loop 原则——高风险操作必须经过人工确认。
+>
+> 执行过程中任何步骤失败都立即中止后续——不是因为代码写得保守，而是无人机场景下'成功了继续、失败了也要继续'是危险的。悬停后的无人机再收指令可能撞到东西。"
+
+参考代码见 `plan_executor.py` + `app.py` execute 端点。

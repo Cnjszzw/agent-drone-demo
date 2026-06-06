@@ -20,16 +20,19 @@ Python、LangChain、DeepSeek API、FastAPI、MCP、LangGraph、Redis
 
 - **技术选型**：Java 侧 LangChain4j 要求 JDK 17，而 wvp-server 为 JDK 8（国内 toG/私有化部署标配），升级风险不可控；Python 侧 LangChain 社区成熟、文档完善。最终确定 Python（Agent 编排层）+ Java（设备控制层）两层架构，通过 REST 通信解耦。
 - **三层架构**：LLM 意图理解层（Prompt + Tool Schema）→ Agent 调度层（LangChain AgentExecutor ReAct 循环）→ 工具执行层（SafetyGate 校验 + HTTP 调 Java 接口下发指令）。
-- **MCP 外部工具集成**：通过 MCP 协议接入高德地图 MCP Server（15 个地图工具），Agent 处理"飞到陆家嘴"等自然语言地名时先调 maps_geo 地理编码获取坐标，再调 fly_to_point 执行飞行。解决了 LLM 无法从地名推断 GPS 坐标的问题。
-- **前端联动**：Agent 操作的进度反馈通过现有 WebSocket 通道推送到前端复用（飞行进度、实时位置、录像状态），无需重复建设。飞行前预览通知通过 fly_to_point 工具内部硬编码调 Java WS 接口推送到前端渲染。
+- **MCP 外部工具集成**：通过 MCP 协议（StreamableHTTP，JSON-RPC 2.0）集成高德地图 MCP Server，langchain-mcp-adapters 的 MultiServerMCPClient 一行完成 initialize→tools/list 握手，15 个地图工具自动注册。地理编码返回多个候选项时，将候选列表回传 LLM 根据上下文选择最佳匹配（如"陆家嘴"6 个候选——云南/湖北/江西/江苏/上海，LLM 判定选上海·浦东）。
 
-### 2. 安全层设计
+### 2. Plan → Confirm → Execute 三段式流程
+
+对标 DJI Copilot 交互模式：Phase 1 LLM 输出结构化 JSON 任务计划（目标+步骤列表+飞前检查），Phase 2 前端渲染规划确认卡片等待用户审核执行，Phase 3 SSE 流式推送每步状态（○→◐→✓/✗）。任何步骤返回 ❌ 或 ⛔ 时立即 break 中止后续执行，防止"无人机已悬停但 Agent 继续执行变焦拍照"的级联错误。
+
+### 3. 安全层设计
 
 - 核心原则：LLM 负责意图理解，安全决策由硬编码规则执行，两者绝不混淆。
 - 实现规则：飞行高度限制（10-120m）、GPS 坐标中国境内范围校验（防 LLM 幻觉编造境外坐标）、电量预估（球面余弦公式 + 3% 耗电率）。
 - Human-in-the-loop：高风险操作（起飞、降落）执行前强制人工确认。
 
-### 3. 异步进度感知
+### 4. 异步进度感知
 
 无人机操作是分钟级的异步过程（飞行到目标点需 2-3 分钟），而 LLM 是同步推理的。核心设计：**工具函数内部封装异步等待，对 LLM 暴露同步接口**。
 

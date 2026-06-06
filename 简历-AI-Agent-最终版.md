@@ -14,8 +14,13 @@ AI Agent 无人机自然语言操控系统
 工具定义与 Function Calling：
 - 基于 LangChain @tool 装饰器定义 16 个无人机工具函数，覆盖飞行控制（指点飞行、返航、急停）、相机拍摄（录像、拍照、全景）、相机参数（变焦、镜头切换、曝光模式、ISO、快门、曝光补偿）、云台控制、状态查询。函数的 docstring + 类型注解自动生成 OpenAI Function Calling Schema。
 - 遵循"工具暴露业务语义而非硬件原语"原则：底层硬件仅有 start/stop 录像原子指令，工具层封装 record_for_duration(60) 复合工具（start→倒计时→stop），LLM 不感知时序编排细节。
-- 通过 MCP（Model Context Protocol）协议集成高德地图 MCP Server，接入 15 个地图工具（地理编码、逆地理编码、POI 搜索、路径规划、天气查询）。Agent 处理"飞到陆家嘴"等自然语言地名时，先调 maps_geo 获取坐标，再调 fly_to_point 执行飞行，解决 LLM 无法从地名推断 GPS 坐标的问题。
-- 前端联动通过 Python HTTP 调 Java WebSocket 接口实现——飞行前自动推预览线和目标点到 Cesium 地图，进度实时更新复用现有 WS 通道。
+- 通过 MCP（Model Context Protocol）协议集成高德地图 MCP Server（StreamableHTTP，JSON-RPC 2.0），通过 langchain-mcp-adapters 的 MultiServerMCPClient 完成 initialize→tools/list 握手，15 个地图工具自动注册为 LangChain Tool。Agent 处理"飞到陆家嘴"等自然语言地名时，先调 maps_geo 地理编码获取候选坐标列表，再将候选项回传给 LLM 根据地址上下文选择最佳匹配（如"陆家嘴"返回 6 个候选——云南/湖北/江西/江苏/上海，LLM 根据用户指令中的上下文判定选择上海·浦东新区），最后填入 fly_to_point 执行飞行。解决了地名歧义场景下 LLM 无法可靠推断 GPS 坐标的问题。
+
+任务规划与执行控制：
+- 采用 Plan → Confirm → Execute 三段式流程（对标 DJI Copilot 交互模式）。Phase 1（规划）：LLM 根据用户指令输出结构化 JSON 任务计划，包含任务目标、有序执行步骤列表、飞前检查项（返航高度、失联动作），前端渲染为规划确认卡片。Phase 2（确认）：用户审核任务步骤和飞前检查项后手动点击"立即执行"，高危操作（飞行、返航）不进入自动执行链路。Phase 3（执行）：用户确认后通过 SSE 流式推送每步执行状态（○等待→◐进行中→✓完成/✗失败），前端实时更新步骤图标。
+- 执行过程中的异常中止机制：每步工具执行后检查返回结果，若以 ❌（失败）或 ⛔（紧急停止）开头立即 break 终止后续步骤，防止"无人机已悬停但 Agent 仍在执行变焦拍照"的级联错误。工具返回的失败状态（如"GPS 信号丢失"）与框架层面的异常（如网络超时）统一处理，确保任何环节出错都不会继续执行。
+
+前端联动通过 Python HTTP 调 Java WebSocket 接口实现——飞行前自动推预览线和目标点到 Cesium 地图，进度实时更新复用现有 WS 通道。
 
 安全校验与 Human-in-the-Loop：
 - SafetyGate 层硬编码安全规则：飞行高度限制（10-120m）、GPS 坐标中国境内范围校验（防 LLM 编造坐标）、电量预估（球面余弦公式 + 3% 耗电率）。原则：LLM 负责意图理解，安全决策由确定性代码执行，两者绝不混淆。
