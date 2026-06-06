@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from config import llm_config, drone_config
 from agent import create_agent
-from tools import set_confirm_handler, executor
+from tools import set_confirm_handler, set_notify_handler, executor
 
 # 日志配置
 logging.basicConfig(level=logging.INFO)
@@ -51,6 +51,11 @@ app.add_middleware(
 
 set_confirm_handler(
     lambda prompt: True  # API 模式自动确认，生产环境需改为独立确认流程
+)
+set_notify_handler(
+    lambda event_type, data: logger.info(
+        "📢 [WS通知] event=%s data=%s (生产环境: Python→Java HTTP→Java WS→前端)", event_type, data
+    )
 )
 logger.warning("⚠️ API 模式：高风险操作将自动确认（Demo 行为，生产需改为独立确认流程）")
 

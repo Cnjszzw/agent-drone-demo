@@ -1,20 +1,27 @@
 """
 无人机工具集 —— LangChain @tool 装饰器
 
-每个 @tool 函数自动生成 OpenAI Function Calling Schema，由 AgentExecutor
-注入到 LLM 的 tools 参数中。LLM 返回 tool_calls 时，框架自动调用对应函数。
+核心设计原则（面试重点）:
 
-对应 WVP 真实功能的映射见每个函数的 docstring。
+1. Agent 工具暴露的是业务语义，不是硬件原语。
+   - record_for_duration(60)   ← LLM 看到的（业务语义）
+   - start → wait → stop       ← 底层实现的（硬件原语，LLM 不感知）
 
-Human-in-the-loop 确认机制：
-- CLI 模式 (main.py)：确认回调 = input()，用户在终端输入 y/n
-- API 模式 (app.py)：确认回调 = 自动确认 + 日志警告
-  生产环境中 API 模式应改为：返回 pending 状态 → 前端弹出确认卡片 → 回调确认接口
+2. 能硬编码的规则不交给 LLM 决策。
+   - SafetyGate 校验 → 硬编码
+   - 飞行前通知前端画预览线 → 硬编码（内嵌在 fly_to_point 里）
+   - Human-in-the-loop 确认 → 硬编码
+   曾经把通知前端作为独立 Tool（notify_frontend），但 LLM 偶发漏调。
+   根因: 飞行前通知是确定性规则，不应交给概率模型决策。
 
-生产化路径：
-- 工具函数签名不变，只替换 executor 实现类（MockExecutor → MqttExecutor）
-- safety_gate 替换为完整规则引擎版本
+3. LLM 只负责意图理解，不负责安全决策和时序编排。
+
+生产化路径:
+- MockExecutor → MqttExecutor（方法签名零改动）
+- _notify_handler → POST /api/wvp/agent/notify → Java WS → 前端
+- SafetyGate 规则从配置文件加载（支持运行时更新）
 """
+import json
 import logging
 from langchain_core.tools import tool
 from config import drone_config
@@ -31,28 +38,17 @@ executor = MockExecutor(
     drone_config.battery
 )
 
-# ==================== Human-in-the-loop 确认机制 ====================
+# ==================== Human-in-the-loop 确认 ====================
 
-# 确认回调：签名为 (prompt: str) -> bool
-# CLI 模式设为 lambda p: input(p).strip().lower() == 'y'
-# API 模式设为 lambda p: True（自动确认 + 日志警告）
 _confirm_handler = lambda prompt: input(prompt).strip().lower() == "y"
 
 
 def set_confirm_handler(handler):
-    """注入确认回调。CLI 模式用 input()，API 模式用自动确认。"""
     global _confirm_handler
     _confirm_handler = handler
 
 
 def _confirm(prompt: str, risk: str = "high") -> bool:
-    """
-    高风险操作确认。
-    API 模式下自动确认并记录警告日志——生产环境应改为独立的确认流程：
-    1. Agent 返回 pending_confirm 状态
-    2. 前端弹出确认卡片
-    3. 用户确认后回调 POST /api/agent/confirm
-    """
     result = _confirm_handler(prompt)
     if result:
         logger.warning("⚠️ [%s风险] 操作已确认执行", risk)
@@ -61,16 +57,48 @@ def _confirm(prompt: str, risk: str = "high") -> bool:
     return result
 
 
+# ==================== 前端通知回调（模拟生产环境） ====================
+
+_notify_handler = lambda event_type, data: logger.info(
+    "📢 [通知前端] %s: %s", event_type, json.dumps(data, ensure_ascii=False)
+)
+
+
+def set_notify_handler(handler):
+    """注入前端通知回调。生产环境调 Java wvp-server 的 WebSocket 接口。"""
+    global _notify_handler
+    _notify_handler = handler
+
+
+def _notify(event_type: str, data: dict):
+    """
+    通知前端。走 Python → Java HTTP → Java WebSocket → 前端 中转链路。
+    不复用 Python 直推前端的原因: 前端已有 Java WS 长连接（鉴权/心跳/Session），
+    Python 再开一条 WS 需要重复实现鉴权，没必要。
+    """
+    logger.info("📢 [通知前端] %s", event_type)
+    _notify_handler(event_type, data)
+
+
+def _on_fly_progress(task_id: str, progress: int, status: str):
+    """飞行进度回调 → 通知前端更新进度条"""
+    _notify("flight_progress", {
+        "task_id": task_id,
+        "progress": progress,
+        "status": status,
+    })
+
+
 # ==================== 工具定义 ====================
 
 
 @tool
 def fly_to_point(lat: float, lng: float, height: float) -> str:
     """
-    控制无人机飞向指定的 GPS 坐标位置。
+    控制无人机飞向指定的 GPS 坐标位置。飞行是异步过程（分钟级），
+    工具内部封装轮询等待，LLM 只看到最终结果（到达/失败/超时）。
 
     对应 WVP: DrcController → MQTT topic: dji/device/{sn}/control/fly
-    高风险操作，执行前经过 SafetyGate 校验和人工确认。
 
     Args:
         lat: 目标纬度，范围 18-54（中国境内）
@@ -79,40 +107,73 @@ def fly_to_point(lat: float, lng: float, height: float) -> str:
     """
     logger.info("🛫 飞行指令: (%.6f, %.6f) 高度 %.0fm", lat, lng, height)
 
+    # 1. SafetyGate 校验（硬编码，不经过 LLM）
     result = safety_gate.validate_fly(lat, lng, height)
     if not result.passed:
         return f"❌ 飞行指令被拒绝: {result.reason}"
     if result.warning:
         logger.warning("⚠️ %s", result.reason)
 
-    if not _confirm(f"  ⚠️ 确认飞至 ({lat:.6f}, {lng:.6f}) 高度 {height}m? (y/n): "):
+    # 2. 通知前端画预览线和目标点（硬编码 —— 曾经是独立 Tool，后因 LLM 漏调下沉至此）
+    _notify("flight_preview", {
+        "lat": lat, "lng": lng, "height": height,
+        "from_lat": executor.current_lat,
+        "from_lng": executor.current_lng,
+    })
+    logger.info("  📍 已通知前端展示飞行预览线")
+
+    # 3. Human-in-the-loop 确认
+    if not _confirm(
+        f"  ⚠️ 确认飞至 ({lat:.6f}, {lng:.6f}) 高度 {height}m? (y/n): "
+    ):
         return "❌ 用户取消飞行"
 
-    return executor.fly_to_point(lat, lng, height)
+    # 4. 执行飞行（内部封装轮询等待 + 进度推送）
+    return executor.fly_to_point(lat, lng, height,
+                                 on_progress=_on_fly_progress)
 
 
 @tool
-def start_recording(duration_seconds: int) -> str:
+def record_for_duration(duration_seconds: int) -> str:
     """
-    开始录像，可指定时长。录像期间无人机保持当前状态。
+    录制指定时长的视频。底层自动处理 start → 等待 → stop 流程。
 
-    对应 WVP: CameraRecordingStartImpl → MQTT topic: dji/device/{sn}/camera/record/start
+    为什么不是 start_recording + stop_recording 两个独立 Tool:
+    LLM 没有时间感知能力，无法可靠编排"开始→等待60s→停止"的时序。
+    工具暴露的是业务语义（录制X秒），不是硬件原语（开始/停止）。
+
+    对应 WVP: CameraRecordingStartImpl + CameraRecordingStopImpl
 
     Args:
-        duration_seconds: 录像时长（秒），0 表示持续录像直到手动停止
+        duration_seconds: 录制时长（秒），范围 5-300
     """
-    logger.info("🎥 录像指令: %ds", duration_seconds)
-    return executor.start_recording(duration_seconds)
+    logger.info("🎥 录制指令: %ds", duration_seconds)
+    return executor.record_for_duration(duration_seconds)
+
+
+@tool
+def start_recording() -> str:
+    """
+    开始持续录像（不指定时长，需手动停止）。
+    用于需要手动控制录像时长的场景，如"一直录到我说停"。
+
+    注意: 如果用户指定了明确的录像时长（如"录60秒"），
+    应优先使用 record_for_duration 工具。
+
+    对应 WVP: CameraRecordingStartImpl
+    """
+    logger.info("🎥 开始持续录像")
+    return executor.start_recording()
 
 
 @tool
 def stop_recording() -> str:
     """
-    停止当前正在进行的录像。
+    停止正在进行的录像。配合 start_recording 使用。
 
-    对应 WVP: CameraRecordingStopImpl → MQTT topic: dji/device/{sn}/camera/record/stop
+    对应 WVP: CameraRecordingStopImpl
     """
-    logger.info("⏹️ 停止录像指令")
+    logger.info("⏹️ 停止录像")
     return executor.stop_recording()
 
 
@@ -171,17 +232,20 @@ def gimbal_control(mode: str) -> str:
 @tool
 def get_drone_status() -> str:
     """
-    查询无人机当前状态，包括位置、电量、飞行模式、GNSS 信号等。
+    查询无人机当前状态，包括位置、电量、飞行模式、GNSS 信号、
+    飞行任务状态、录像状态等。
 
-    对应 WVP: manage 模块 OSD 遥测数据查询（Redis 缓存 + MQTT 实时推送）
+    对应 WVP: manage 模块 OSD 遥测数据（Redis 缓存 + MQTT 实时推送）
     """
     logger.info("📡 查询设备: %s", drone_config.device_id)
     return executor.get_status()
 
 
-# 注册所有工具
+# ==================== 工具注册 ====================
+
 ALL_TOOLS = [
     fly_to_point,
+    record_for_duration,
     start_recording,
     stop_recording,
     take_photo,

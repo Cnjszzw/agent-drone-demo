@@ -10,36 +10,52 @@
 
 ## 技术栈
 
-Python、LangChain、DeepSeek API（OpenAI 兼容）、FastAPI、Function Calling / Tool Use
+Python、LangChain、DeepSeek API（OpenAI 兼容 Function Calling）、FastAPI
 
 ## 项目实现
 
-### 1. Agent 框架选型与架构设计
+### 1. 架构选型与设计
 
 背景：公司 WVP 可视化视频调度平台已具备无人机手动控制能力（MQTT 指令下发、DRC 遥控模式、ZLM 视频推流），业务方对标 DJI 司空 2 Copilot 提出自然语言操控无人机的需求。
 
-- 技术选型对比：Java 侧 LangChain4j 要求 JDK 17，而 wvp-server 为 JDK 8（国内 toG/私有化部署标配），升级风险不可控；Python 侧 LangChain 社区成熟、文档完善，且 DeepSeek 提供 OpenAI 兼容接口。最终确定 Python（Agent 编排层）+ Java（设备控制层）两层架构，通过 REST 通信解耦。
-- 三层架构：LLM 意图理解层（Prompt + Tool Schema）→ Agent 调度层（LangChain AgentExecutor ReAct 循环）→ 工具执行层（SafetyGate 校验 + 模拟 MQTT 下发）。
+- **技术选型**：Java 侧 LangChain4j 要求 JDK 17，而 wvp-server 为 JDK 8（国内 toG/私有化部署标配），升级风险不可控；Python 侧 LangChain 社区成熟、文档完善。最终确定 Python（Agent 编排层）+ Java（设备控制层）两层架构，通过 REST 通信解耦。
+- **三层架构**：LLM 意图理解层（Prompt + Tool Schema）→ Agent 调度层（LangChain AgentExecutor ReAct 循环）→ 工具执行层（SafetyGate 校验 + HTTP 调 Java 接口下发指令）。
+- **前端联动**：Agent 操作的进度反馈通过现有 WebSocket 通道推送到前端复用（飞行进度、实时位置、录像状态），无需重复建设。飞行前预览通知通过 fly_to_point 工具内部硬编码调 Java WS 接口推送到前端渲染。
 
-### 2. 工具定义与 Function Calling 实现
+### 2. 安全层设计
 
-- 基于 LangChain `@tool` 装饰器定义 7 个无人机工具函数（fly_to_point / start_recording / stop_recording / take_photo / return_home / gimbal_control / get_drone_status），函数的 docstring + 类型注解自动生成 OpenAI Function Calling Schema，无需手动编写 JSON Schema。
-- 工具设计对应 WVP 生产环境真实控制链路：每个工具函数内部模拟完整的 MQTT Topic + JSON Payload 构建与下发过程，生产化时只需替换 Executor 实现类即可对接真实 MQTT 通道。
+- 核心原则：LLM 负责意图理解，安全决策由硬编码规则执行，两者绝不混淆。
+- 实现规则：飞行高度限制（10-120m）、GPS 坐标中国境内范围校验（防 LLM 幻觉编造境外坐标）、电量预估（球面余弦公式 + 3% 耗电率）。
+- Human-in-the-loop：高风险操作（起飞、降落）执行前强制人工确认。
 
-### 3. 安全校验层设计（SafetyGate）
+### 3. 异步进度感知
 
-- 核心原则：LLM 只负责意图理解，安全决策必须由硬编码规则执行，两者绝不混淆。
-- 实现规则：飞行高度限制（10-120m）、GPS 坐标中国境内范围校验（防 LLM 幻觉编造境外坐标）、电量预估（球面余弦公式计算飞行距离 × 3% 耗电率 + 10% 余量）。
-- Human-in-the-loop：高风险操作（起飞、降落）执行前强制人工确认（CLI 模式交互式确认，API 模式预留 pending→confirmed 两阶段提交接口）。
+无人机操作是分钟级的异步过程（飞行到目标点需 2-3 分钟），而 LLM 是同步推理的。在工具函数内部通过轮询机制弥合这个 gap——`fly_to_point` 下发指令后轮询任务状态直到到达/失败/超时，LLM 只看到最终结果，不感知等待过程。录像控制同理：硬件只有 start/stop 原子指令，在工具层封装 `record_for_duration` 复合工具（内部调 start → sleep → 调 stop）。
 
-### 4. 双模式接口
+## 难点与解决
 
-- CLI 模式：基于 Python 标准输入输出，适合本地调试与功能验证。
-- FastAPI 模式：提供 RESTful API（POST /api/agent/chat、GET /api/agent/status），Swagger 自动文档，支持前端集成。
-- 两种模式共享同一套 Agent 工厂和工具定义，确认机制通过回调注入切换。
+### 难点一：LLM 幻觉导致前端通知不可靠
 
-## 项目亮点
+**问题**：最初将"通知前端画飞行预览线"设计为独立的 `notify_frontend` Tool，由 LLM 自主决定何时调用。实际测试发现 LLM 偶发漏调（跳过通知直接飞行），导致前端没有预览线，指挥人员无法确认目标位置。
 
-- **安全设计**：明确划分 LLM 意图理解与硬编码安全校验的职责边界，所有飞行安全规则 100% 确定性执行，不经过 LLM 判断。
-- **工程化思考**：考虑到 JDK 8 私有化部署的现实约束，选择 Python Agent + Java 控制的两层架构，而非强行统一技术栈。
-- **框架能力**：熟练运用 LangChain 的 @tool 装饰器、AgentExecutor ReAct 编排、ChatPromptTemplate 等核心组件，理解 Agent 底层 Function Calling 机制。
+**根因**：`notify_frontend` 不是意图理解问题——飞行前一定需要预览通知。把它交给概率模型（LLM）决策，本质上把确定性规则变成了概率性行为。
+
+**解决**：将通知逻辑从 Tool 下沉到 `fly_to_point` 工具函数内部，作为 SafetyGate 后的第一个硬编码步骤——安全校验通过后自动调 Java ws-server 的 WebSocket 接口推送预览数据到前端，再等待用户确认。遵循原则：**能硬编码的规则不交给 LLM 决策**。这一思路贯穿了 SafetyGate、预览通知、确认流程等所有关键节点。
+
+### 难点二：同步 LLM vs 异步现实世界的 gap
+
+**问题**：LLM 是同步推理的（秒级），无人机操作是异步的（飞行 2-3 分钟、录像 60s）。LLM 调 `fly_to_point()` 后收到返回码就以为完成了，实际飞机还在路上。同理，LLM 无法感知实时进度，无法判断何时可以执行下一步。
+
+**解决**：Agent 工具函数内部封装轮询等待逻辑。`fly_to_point` 下发指令后以 1s 间隔轮询任务状态（通过后端接口或 Redis），到达/失败后返回确定性结果给 LLM。录像同理——底层只有 start/stop 两个原子指令，在工具层封装 `record_for_duration` 复合工具（start → 倒计时等待 → stop）。LLM 只看到工具返回的最终结果，不感知中间的异步等待过程。
+
+### 难点三：工具粒度的取舍
+
+**问题**：工具定义太细（把 start_recording 和 stop_recording 分别暴露给 LLM），LLM 需要自己编排"开始→等待→停止"的时序——这对 LLM 来说极不可靠，因为它没有时间感知能力。
+
+**解决**：将工具按业务语义封装，而非按硬件原语暴露。`record_for_duration(60)` 替代了 start_recording + wait + stop_recording 的三步编排。原则：**Agent 工具暴露的是业务能力，不是硬件接口**。跟操作系统封装 read/write 为 fopen/fclose 一个道理。
+
+## 技术收获
+
+- 深入理解了 LLM Function Calling 机制及其工程局限性（JSON 输出不稳定、幻觉、无法感知时间）
+- 掌握了 Agent 架构中"确定性规则 vs 概率性决策"的职责划分原则
+- 积累了异步系统（无人机）与同步推理（LLM）之间的状态同步设计经验
