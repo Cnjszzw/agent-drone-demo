@@ -327,9 +327,6 @@ async def execute_plan(request: ChatRequest):
       step_done:   { type:"step_done",  index:0, result:"✅ ..." }
       step_error:  { type:"step_error", index:0, error:"..." }
       all_done:    { type:"all_done",  summary:"...", results:[...] }
-
-    前端渲染:
-      ○ 等待 → ◐ 进行中（转圈动画）→ ✓ 已完成（绿色打勾）→ ✗ 失败（红色叉）
     """
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="plan 不能为空")
@@ -344,30 +341,59 @@ async def execute_plan(request: ChatRequest):
 
     logger.info("▶ 执行规划: %d 步", len(plan["steps"]))
 
-    event_queue: queue.Queue = queue.Queue()
-
-    # 在后台线程逐步骤执行
-    execute_plan_stream(plan, None, event_queue)
-
+    # 无线程——在当前 async loop 上直接执行，MCP session 不会丢失
     async def generate():
-        loop = asyncio.get_event_loop()
-        while True:
-            try:
-                event = await loop.run_in_executor(
-                    None, lambda: event_queue.get(timeout=0.1)
-                )
-            except queue.Empty:
-                yield ": heartbeat\n\n"
-                continue
+        from plan_executor import _find_tool, _extract_coords_from_geo_result
 
-            if event is None:
+        steps = plan.get("steps", [])
+        results = []
+
+        for i, step in enumerate(steps):
+            tool_name = step.get("tool", "")
+            tool_args = dict(step.get("tool_args", {}))
+
+            yield f"data: {json.dumps({'type': 'step_start', 'index': i, 'total': len(steps), 'description': step.get('description', tool_name), 'tool': tool_name}, ensure_ascii=False)}\n\n"
+
+            tool_func = _find_tool(tool_name)
+            if tool_func is None:
+                yield f"data: {json.dumps({'type': 'step_error', 'index': i, 'error': f'未找到工具: {tool_name}'}, ensure_ascii=False)}\n\n"
+                results.append(f"❌ 未知工具 {tool_name}")
                 break
 
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            try:
+                # maps_geo → fly_to_point 坐标自动填充
+                if tool_name == "fly_to_point" and i > 0:
+                    prev = results[-1] if results else ""
+                    coords = _extract_coords_from_geo_result(prev)
+                    if coords and tool_args.get("lat") is None:
+                        tool_args["lat"] = coords["lat"]
+                        tool_args["lng"] = coords["lng"]
+                        logger.info("  📍 maps_geo→fly_to_point: %.4f, %.4f",
+                                    coords["lat"], coords["lng"])
 
-            if event["type"] in ("all_done", "step_error"):
-                # 最后一步错误也继续发送，等 all_done
-                pass
+                # 统一用 ainvoke（MCP 工具需要）
+                if hasattr(tool_func, 'ainvoke'):
+                    result = await tool_func.ainvoke(tool_args)
+                else:
+                    result = tool_func.invoke(tool_args)
+
+                results.append(str(result))
+                yield f"data: {json.dumps({'type': 'step_done', 'index': i, 'result': str(result)}, ensure_ascii=False)}\n\n"
+
+            except Exception as e:
+                logger.error("步骤执行失败 [%s]: %s", tool_name, e)
+                yield f"data: {json.dumps({'type': 'step_error', 'index': i, 'error': str(e)}, ensure_ascii=False)}\n\n"
+                results.append(f"❌ {tool_name}: {e}")
+                break
+
+        ok = "✅"; fail = "❌"
+        summary_lines = []
+        for idx, (s, r) in enumerate(zip(steps, results)):
+            icon = fail if r.startswith("❌") else ok
+            summary_lines.append(f"  {icon} [{idx+1}] {s.get('description', '')}")
+        summary = "\n".join(summary_lines) if summary_lines else "无步骤"
+
+        yield f"data: {json.dumps({'type': 'all_done', 'summary': summary, 'results': results}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate(),
