@@ -29,6 +29,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from config import llm_config, drone_config
 from agent import create_agent
 from tools import set_confirm_handler, set_notify_handler, executor, ALL_TOOLS
+from executor import MockExecutor
 
 # ── 日志 ──────────────────────────────────────────
 
