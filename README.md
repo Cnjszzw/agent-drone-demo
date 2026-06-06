@@ -51,71 +51,56 @@ cp .env.example .env
 
 ### 4. 运行
 
-两种模式可选：
-
 ```bash
-# 模式 A：CLI 交互（终端对话）
-python main.py
-
-# 模式 B：FastAPI 服务（HTTP API + Swagger 文档）
+# 启动（前端聊天框 + API + SSE 流式）
 uvicorn app:app --reload --port 8000
 ```
 
+浏览器打开：**http://localhost:8000**
+
+- 聊天框界面直接输入自然语言指令
+- Swagger 文档：http://localhost:8000/docs
+
 ## 使用方式
 
-### CLI 模式
+### 前端聊天框（推荐）
+
+打开 http://localhost:8000，在聊天框中输入指令。Agent 执行过程通过 **SSE（Server-Sent Events）流式推送** 实时展示每个工具调用和结果。
+
+快捷按钮预设了常见指令，点击即可发送。
+
+### API 接口
+
+**SSE 流式聊天（推荐）**
 
 ```bash
-$ python main.py
-
-╔════════════════════════════════════════════════╗
-║     🚁 AI Agent 无人机操控 Demo (CLI)          ║
-╚════════════════════════════════════════════════╝
-设备: DJI-Matrice-001 | 电量: 85% | 返航点: (31.025, 121.435)
-
-💬 请输入指令 (quit 退出):
-> 查询当前状态
-> 飞到 (31.03, 121.44) 高度 80m，拍照 3 张，然后返航
-> quit
+curl -X POST http://localhost:8000/api/agent/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message": "飞到 (31.03, 121.44) 高度 80m，拍照 3 张"}' \
+  --no-buffer
 ```
 
-### FastAPI 模式
-
-```bash
-$ uvicorn app:app --reload --port 8000
+SSE 事件流：
+```
+data: {"type":"action","tool":"fly_to_point","input":"..."}
+data: {"type":"tool_result","output":"✅ 已到达目标点..."}
+data: {"type":"action","tool":"take_photo","input":"..."}
+data: {"type":"tool_result","output":"✅ 连拍完成，共 3 张照片"}
+data: {"type":"finish","output":"任务完成！..."}
 ```
 
-浏览器打开 Swagger 文档：**http://localhost:8000/docs**
-
-#### API 接口
-
-**聊天（核心接口）**
+**非流式聊天（兼容）**
 
 ```bash
 curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "飞到 (31.03, 121.44) 高度 80m，拍照 3 张"}'
+  -d '{"message": "查询当前状态"}'
 ```
 
-响应：
-```json
-{
-  "success": true,
-  "output": "✅ 任务完成！已飞至目标点，拍照 3 张",
-  "elapsed_seconds": 12.3
-}
-```
-
-**查询状态**
+**状态查询**
 
 ```bash
 curl http://localhost:8000/api/agent/status
-```
-
-**健康检查**
-
-```bash
-curl http://localhost:8000/api/agent/health
 ```
 
 ## 支持的指令
@@ -135,9 +120,9 @@ curl http://localhost:8000/api/agent/health
 
 ```
 agent-demo/
-├── app.py               # FastAPI 服务（HTTP API）
-├── main.py              # CLI 交互入口
-├── agent.py             # Agent 工厂（CLI / API 共享）
+├── app.py               # FastAPI 服务（SSE 流式 + API + 静态文件）
+├── static/index.html    # 前端聊天框（单页 HTML，SSE 流式展示）
+├── agent.py             # Agent 工厂
 ├── tools.py             # 7 个 LangChain @tool 无人机工具
 ├── safety.py            # SafetyGate 硬编码安全校验
 ├── executor.py          # MockExecutor 模拟 MQTT 下发
