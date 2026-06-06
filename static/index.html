@@ -101,6 +101,7 @@ let isStreaming = false;
 let isEmergencyStopped = false;
 let abortController = null;
 let currentPlanCard = null;
+let currentPlanData = null;
 
 const chat=document.getElementById('chat'),input=document.getElementById('userInput'),
   sendBtn=document.getElementById('sendBtn'),stopBtn=document.getElementById('stopBtn'),
@@ -160,6 +161,7 @@ async function sendMessage(){
 
 // ── 渲染规划卡片 ──
 function renderPlanCard(plan){
+  currentPlanData=plan;
   const steps=plan.steps||[];
   const preflight=plan.preflight||{};
 
@@ -186,7 +188,7 @@ function renderPlanCard(plan){
     </div>
     <div class="plan-actions">
       <button class="btn-cancel" onclick="cancelPlan(this)">取消</button>
-      <button class="btn-execute" onclick="executePlan(this,'${escapeHtml(JSON.stringify(plan))}')">立即执行</button>
+      <button class="btn-execute" onclick="executePlan(this)">立即执行</button>
     </div>`;
   chat.appendChild(card);
   currentPlanCard=card;
@@ -202,14 +204,14 @@ function cancelPlan(btn){
 }
 
 // ── Phase 3: 执行规划 ──
-async function executePlan(btn,planStr){
+async function executePlan(btn){
   btn.disabled=true;
   btn.parentElement.querySelector('.btn-cancel').disabled=true;
-
-  // 更新按钮文案
   btn.textContent='执行中...';
 
-  const plan=JSON.parse(planStr);
+  const plan=currentPlanData;
+  if(!plan){addMsg('error','❌ 规划数据丢失');return}
+  const planStr=JSON.stringify(plan);
   const steps=plan.steps||[];
   const total=steps.length;
   abortController=new AbortController();
