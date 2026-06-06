@@ -224,10 +224,25 @@ def _find_tool(tool_name: str):
 
 
 def _extract_coords_from_geo_result(result_str: str) -> dict | None:
-    """从 maps_geo 返回的 JSON 中提取第一个候选坐标"""
+    """从 maps_geo 返回的 JSON 中提取坐标，优先选取最后一个候选项（通常最精确）"""
     import re
-    # maps_geo 返回: {"results":[{"location":"121.50,31.23",...}]}
-    match = re.search(r'"location"\s*:\s*"([\d.]+),([\d.]+)"', result_str)
-    if match:
-        return {"lng": float(match.group(1)), "lat": float(match.group(2))}
-    return None
+    # maps_geo 返回: {"results":[{"location":"121.50,31.23",...}, ...]}
+    matches = re.findall(r'"location"\s*:\s*"([\d.]+),([\d.]+)"', result_str)
+    if not matches:
+        return None
+    # 取最后一个（高德通常把最匹配的放在最后）
+    lng, lat = matches[-1]
+    return {"lng": float(lng), "lat": float(lat)}
+
+
+def _clean_tool_args(tool_name: str, args: dict) -> dict:
+    """清理 LLM 生成的不规范参数（如 height:'100m' → height:100）"""
+    cleaned = dict(args)
+    for key in ("height", "lat", "lng", "duration_seconds", "count", "factor", "ev"):
+        if key in cleaned and isinstance(cleaned[key], str):
+            val = cleaned[key].strip()
+            # 去掉单位后缀（m、秒、x 等）
+            val = re.sub(r'[^0-9.\-]', '', val)
+            if val:
+                cleaned[key] = float(val) if '.' in val else int(val)
+    return cleaned

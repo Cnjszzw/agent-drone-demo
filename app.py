@@ -343,7 +343,7 @@ async def execute_plan(request: ChatRequest):
 
     # 无线程——在当前 async loop 上直接执行，MCP session 不会丢失
     async def generate():
-        from plan_executor import _find_tool, _extract_coords_from_geo_result
+        from plan_executor import _find_tool, _extract_coords_from_geo_result, _clean_tool_args
 
         steps = plan.get("steps", [])
         results = []
@@ -361,6 +361,9 @@ async def execute_plan(request: ChatRequest):
                 break
 
             try:
+                # 清理 LLM 参数（height: "100m" → 100）
+                tool_args = _clean_tool_args(tool_name, tool_args)
+
                 # maps_geo → fly_to_point 坐标自动填充
                 if tool_name == "fly_to_point" and i > 0:
                     prev = results[-1] if results else ""
