@@ -19,6 +19,7 @@ DJI Copilot 的 UX:
   高风险操作必须经过人工确认才进入执行阶段。"
 """
 import json
+import re
 import logging
 from langchain_openai import ChatOpenAI
 
