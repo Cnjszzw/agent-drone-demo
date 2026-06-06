@@ -1046,3 +1046,90 @@ LangGraph:     approach → start_record 固定边
 #### 参考代码
 
 验证脚本见 `langgraph_orbit.py`——无 langgraph 依赖，通过注释和伪代码演示完整子图结构。面试时可以打开 IDE 展示。
+
+---
+
+### 7.7 MCP 集成：高德地图地理编码
+
+#### 痛点：用户说地名，LLM 不知道坐标
+
+```
+用户: "飞到紫竹高新区5号楼，拍照"
+
+AgentExecutor 面临的问题:
+  fly_to_point 需要 (lat, lng, height) 三个参数
+  LLM 不知道"紫竹高新区5号楼"的坐标
+  → 如果 LLM 编造坐标 → SafetyGate 可能拦截或放行错误的点
+  → 用户体验差：不能说地名，必须手动输入 GPS 数字
+```
+
+#### 方案：MCP 协议集成高德地图 Server
+
+MCP（Model Context Protocol）是 Anthropic 提出的开放标准——让 LLM 能安全地调用外部工具和数据源。高德地图提供了官方 MCP Server，通过 StreamableHTTP 暴露 15 个地图工具。
+
+接入方式：
+
+```python
+# mcp_tools.py —— 核心就是这两行
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
+client = MultiServerMCPClient({
+    "amap": {
+        "transport": "streamable_http",
+        "url": "https://mcp.amap.com/mcp?key=YOUR_KEY",
+    }
+})
+await client.__aenter__()
+tools = client.get_tools()  # 返回 15 个标准 LangChain BaseTool
+ALL_TOOLS.extend(tools)     # 注册到 Agent
+```
+
+MCP 握手流程（框架自动完成）：
+
+```
+Python Agent                       高德 MCP Server
+    │                                    │
+    │── POST initialize ────────────────→│  JSON-RPC 2.0
+    │←── sessionId + capabilities ──────│  协议版本: 2025-03-26
+    │                                    │
+    │── POST tools/list ────────────────→│
+    │←── 15 个工具定义 (含 Schema) ──────│
+    │                                    │
+    │── POST tools/call {maps_geo} ─────→│  运行时调用
+    │←── {"location":"121.50,31.23"} ───│
+```
+
+#### 15 个高德工具
+
+| 工具 | 功能 | Agent 何时调用 |
+|------|------|-------------|
+| `maps_geo` | 地址→坐标（地理编码） | 用户说"飞到陆家嘴" |
+| `maps_regeocode` | 坐标→地址（逆编码） | 报告无人机当前位置 |
+| `maps_text_search` | POI 关键词搜索 | 搜索"最近的医院" |
+| `maps_around_search` | 周边搜索 | "信号塔附近有什么" |
+| `maps_direction_driving` | 驾车路径规划 | 规划地面救援路线 |
+| `maps_distance` | 坐标间距计算 | 估算飞行距离 |
+| `maps_weather` | 天气查询 | 飞行前检查天气条件 |
+
+#### 完整调用链
+
+```
+用户: "飞到陆家嘴，拍照"
+
+1. maps_geo("上海市浦东新区陆家嘴")
+   → {"location": "121.507513,31.234295"}
+
+2. fly_to_point(lat=31.23, lng=121.50, height=80)
+   → 内部轮询 Redis → "✅ 已到达"
+
+3. take_photo(count=1)
+   → "✅ 拍照完成"
+```
+
+#### 面试话术
+
+> "用户习惯说地名而不是 GPS 坐标。我们通过 MCP 协议接入了高德地图的官方 Server——`langchain-mcp-adapters` 一行 `MultiServerMCPClient` 完成握手，15 个地图工具自动注册为 LangChain Tool。Agent 在处理'飞到陆家嘴'这类指令时，会先调 `maps_geo` 做地理编码，拿到坐标后再调 `fly_to_point`。这比硬编码坐标列表或让 LLM 猜坐标都可靠。"
+
+#### 参考代码
+
+详见 `mcp_tools.py`——完整 MCP 接入流程。配置 `AMAP_API_KEY` 后启动服务即可验证。申请地址：https://console.amap.com/dev/key/app

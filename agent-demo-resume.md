@@ -10,7 +10,7 @@
 
 ## 技术栈
 
-Python、LangChain、DeepSeek API（OpenAI 兼容 Function Calling）、FastAPI
+Python、LangChain、DeepSeek API、FastAPI、MCP、LangGraph、Redis
 
 ## 项目实现
 
@@ -20,6 +20,7 @@ Python、LangChain、DeepSeek API（OpenAI 兼容 Function Calling）、FastAPI
 
 - **技术选型**：Java 侧 LangChain4j 要求 JDK 17，而 wvp-server 为 JDK 8（国内 toG/私有化部署标配），升级风险不可控；Python 侧 LangChain 社区成熟、文档完善。最终确定 Python（Agent 编排层）+ Java（设备控制层）两层架构，通过 REST 通信解耦。
 - **三层架构**：LLM 意图理解层（Prompt + Tool Schema）→ Agent 调度层（LangChain AgentExecutor ReAct 循环）→ 工具执行层（SafetyGate 校验 + HTTP 调 Java 接口下发指令）。
+- **MCP 外部工具集成**：通过 MCP 协议接入高德地图 MCP Server（15 个地图工具），Agent 处理"飞到陆家嘴"等自然语言地名时先调 maps_geo 地理编码获取坐标，再调 fly_to_point 执行飞行。解决了 LLM 无法从地名推断 GPS 坐标的问题。
 - **前端联动**：Agent 操作的进度反馈通过现有 WebSocket 通道推送到前端复用（飞行进度、实时位置、录像状态），无需重复建设。飞行前预览通知通过 fly_to_point 工具内部硬编码调 Java WS 接口推送到前端渲染。
 
 ### 2. 安全层设计

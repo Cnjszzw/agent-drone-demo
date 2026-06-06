@@ -1,7 +1,7 @@
 AI Agent 无人机自然语言操控系统
 上海寰创通信股份有限公司
 2025/04 — 2026/03
-技术栈：Python、LangChain、DeepSeek API、FastAPI、SSE、LangGraph、Redis
+技术栈：Python、LangChain、DeepSeek API、FastAPI、SSE、MCP、LangGraph、Redis
 
 项目概述：
 面向消防应急指挥场景，设计并实现基于 LLM Agent 的无人机自然语言操控系统。用户通过自然语言输入（如"飞到信号塔，环绕一圈并录像，然后返航"），Agent 自动完成意图理解、任务规划、安全校验与指令编排执行，替代传统的逐按钮手动操作流程。对标 DJI 司空 2 Copilot，独立完成从需求分析、技术选型到架构设计、编码联调的全流程闭环。
@@ -14,6 +14,7 @@ AI Agent 无人机自然语言操控系统
 工具定义与 Function Calling：
 - 基于 LangChain @tool 装饰器定义 16 个无人机工具函数，覆盖飞行控制（指点飞行、返航、急停）、相机拍摄（录像、拍照、全景）、相机参数（变焦、镜头切换、曝光模式、ISO、快门、曝光补偿）、云台控制、状态查询。函数的 docstring + 类型注解自动生成 OpenAI Function Calling Schema。
 - 遵循"工具暴露业务语义而非硬件原语"原则：底层硬件仅有 start/stop 录像原子指令，工具层封装 record_for_duration(60) 复合工具（start→倒计时→stop），LLM 不感知时序编排细节。
+- 通过 MCP（Model Context Protocol）协议集成高德地图 MCP Server，接入 15 个地图工具（地理编码、逆地理编码、POI 搜索、路径规划、天气查询）。Agent 处理"飞到陆家嘴"等自然语言地名时，先调 maps_geo 获取坐标，再调 fly_to_point 执行飞行，解决 LLM 无法从地名推断 GPS 坐标的问题。
 - 前端联动通过 Python HTTP 调 Java WebSocket 接口实现——飞行前自动推预览线和目标点到 Cesium 地图，进度实时更新复用现有 WS 通道。
 
 安全校验与 Human-in-the-Loop：
