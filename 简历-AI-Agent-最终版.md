@@ -1,7 +1,7 @@
 AI Agent 无人机自然语言操控系统
 上海寰创通信股份有限公司
 2025/04 — 2026/03
-技术栈：Python、LangChain、DeepSeek API、FastAPI、SSE、LangGraph、Redis、Java、SpringBoot、MQTT
+技术栈：Python、LangChain、DeepSeek API、FastAPI、SSE、LangGraph、Redis
 
 项目概述：
 面向消防应急指挥场景，设计并实现基于 LLM Agent 的无人机自然语言操控系统。用户通过自然语言输入（如"飞到信号塔，环绕一圈并录像，然后返航"），Agent 自动完成意图理解、任务规划、安全校验与指令编排执行，替代传统的逐按钮手动操作流程。对标 DJI 司空 2 Copilot，独立完成从需求分析、技术选型到架构设计、编码联调的全流程闭环。
