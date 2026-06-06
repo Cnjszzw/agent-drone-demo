@@ -1,4 +1,4 @@
-WVP Copilot：基于 AI Agent 的无人机智能体操控系统
+WVP Copilot：基于 AI Agent 的无人机智能体
 上海寰创通信股份有限公司
 2025/04 — 2026/03
 技术栈：Python、LangChain、DeepSeek API、FastAPI、SSE、MCP、LangGraph、Redis
@@ -32,7 +32,7 @@ WVP Copilot：基于 AI Agent 的无人机智能体操控系统
 最初将"飞行前通知前端画预览线"设计为独立 Tool 由 LLM 自主调用，上线测试发现 LLM 偶发跳过（~10% 概率），导致前端无预览线。根因：飞行前通知是确定性规则，不应交给概率模型决策。将通知逻辑从 Tool 层下沉到 fly_to_point 函数内部作为硬编码步骤——SafetyGate 校验通过后自动推预览线。原则延伸至全部关键节点：能硬编码的规则不交给 LLM。
 
 难点二：同步 LLM 与异步飞行的状态同步
-LLM 是秒级同步推理，无人机飞行是分钟级异步过程（2-3 分钟到达目标点）。工具函数内部封装 Redis 轮询等待——Python redis-py 直连 localhost Redis，每秒 GET 任务状态（<1ms/次），completed/failed/超时后返回 LLM。中间进度（30%→60%→90%）仅推前端展示，LLM 不感知。评估了 HTTP 轮询、MQTT 直连、WebSocket 长连接、HTTP 回调四种替代方案，Redis 直连方案零新依赖、零连接管理、1s 轮询对 2-3 分钟飞行完全可接受。
+LLM 是秒级同步推理，无人机飞行是分钟级异步过程（2-3 分钟到达目标点）。工具函数内部封装 Redis 轮询等待——Python redis-py 直连 Redis，每秒 GET 任务状态（<1ms/次），completed/failed/超时后返回 LLM。中间进度（30%→60%→90%）仅推前端展示，LLM 不感知。评估了 HTTP 轮询、MQTT 直连、WebSocket 长连接、HTTP 回调四种替代方案，Redis 直连方案零新依赖、零连接管理、1s 轮询对 2-3 分钟飞行完全可接受。
 
 难点三：工具粒度——业务语义与硬件原语的冲突
 硬件录像只有 start/stop 两个原子指令。直接暴露给 LLM 时，LLM 无法可靠编排"开始→等待 60s→停止"的时序（LLM 无时间感知能力，可能立即 stop 或忘了 stop）。将原子指令封装为 record_for_duration 复合工具，内部实现完整时序，LLM 只看到业务语义。类比操作系统将 read/write 封装为 fopen/fclose。

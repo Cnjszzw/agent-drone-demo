@@ -36,8 +36,8 @@ Python、LangChain、DeepSeek API、FastAPI、MCP、LangGraph、Redis
 
 无人机操作是分钟级的异步过程（飞行到目标点需 2-3 分钟），而 LLM 是同步推理的。核心设计：**工具函数内部封装异步等待，对 LLM 暴露同步接口**。
 
-- 飞行进度感知：Python 通过 redis-py 直连 localhost Redis，每秒 GET `drone:task:{id}:status` 查询任务状态（<1ms），直到 completed/failed/超时后返回结果给 LLM。中间进度（30%→60%→90%）仅推前端展示，LLM 不感知。
-- 方案对比：评估了 HTTP 轮询 Java、Python 直连 MQTT、Python↔Java WS 长连接、Java HTTP 回调四种方案。Redis 直连被选中——localhost 访问 <1ms、零新依赖、无连接管理、1s 轮询对 2-3 分钟飞行可忽略。
+- 飞行进度感知：Python 通过 redis-py 直连 Redis，每秒 GET `drone:task:{id}:status` 查询任务状态（<1ms），直到 completed/failed/超时后返回结果给 LLM。中间进度（30%→60%→90%）仅推前端展示，LLM 不感知。
+- 方案对比：评估了 HTTP 轮询 Java、Python 直连 MQTT、Python↔Java WS 长连接、Java HTTP 回调四种方案。Redis 直连被选中——单机访问 <1ms、零新依赖、无连接管理、1s 轮询对 2-3 分钟飞行可忽略。
 - 录像控制：硬件只有 start/stop 原子指令，工具层封装 `record_for_duration` 复合工具（start → 倒计时 → stop），LLM 只看到业务语义。
 
 此设计模式与 Anthropic Computer Use、DJI 司空 2 Copilot 的 tool-use 架构一致——将异步等待封装在工具内部、对 LLM 暴露同步函数，是 Agent 工程化的行业共识。
