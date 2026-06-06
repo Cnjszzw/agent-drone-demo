@@ -230,6 +230,73 @@ def gimbal_control(mode: str) -> str:
 
 
 @tool
+def set_zoom(factor: float) -> str:
+    """
+    调节相机变焦倍数。可用于放大观察远处目标或缩小获取更广视野。
+
+    对应 WVP: CameraFocalLengthSetImpl / CameraFrameZoomImpl
+
+    Args:
+        factor: 变焦倍数，范围 1-56（红外镜头固定 1x）
+    """
+    logger.info("🔍 变焦指令: %.1fx", factor)
+
+    if factor < 1 or factor > 56:
+        return f"❌ 变焦倍数 {factor}x 超出范围，支持 1x-56x"
+
+    if executor.lens_mode == "ir" and factor != 1:
+        return "❌ 红外镜头不支持变焦，请先切换到广角或变焦镜头"
+
+    return executor.set_zoom(factor)
+
+
+@tool
+def switch_lens(mode: str) -> str:
+    """
+    切换相机镜头类型。支持广角（大场景）、变焦（远距离观察）、红外（热成像）三种。
+
+    对应 WVP: CameraModeSwitchImpl
+
+    Args:
+        mode: 镜头类型，'wide'=广角, 'zoom'=变焦, 'ir'=红外（热成像）
+    """
+    logger.info("📷 镜头切换: %s", mode)
+
+    if mode not in ("wide", "zoom", "ir"):
+        return f"❌ 不支持的镜头类型: {mode}，仅支持 wide/zoom/ir"
+
+    if mode == "ir" and executor.recording:
+        return "❌ 录像中无法切换镜头，请先停止录像"
+
+    return executor.switch_lens(mode)
+
+
+@tool
+def panorama_photo() -> str:
+    """
+    全景拍照。无人机自动拍摄多张照片并合成为全景图。
+    拍摄期间无人机需保持稳定悬停（实际约 60s，Demo 加速为 4s）。
+
+    ⚠️ 全景拍摄期间请勿移动无人机，否则合成失败。
+
+    对应 WVP: CameraPhotoTakeImpl (panorama mode)
+    """
+    logger.info("🖼️ 全景拍照指令")
+    return executor.panorama_photo()
+
+
+@tool
+def get_camera_status() -> str:
+    """
+    查询相机当前参数，包括镜头类型、变焦倍数、录像状态、存储空间等。
+
+    对应 WVP: manage 模块相机遥测数据
+    """
+    logger.info("📷 查询相机状态: %s", drone_config.device_id)
+    return executor.get_camera_status()
+
+
+@tool
 def get_drone_status() -> str:
     """
     查询无人机当前状态，包括位置、电量、飞行模式、GNSS 信号、
@@ -249,7 +316,11 @@ ALL_TOOLS = [
     start_recording,
     stop_recording,
     take_photo,
+    panorama_photo,
+    set_zoom,
+    switch_lens,
     return_home,
     gimbal_control,
     get_drone_status,
+    get_camera_status,
 ]

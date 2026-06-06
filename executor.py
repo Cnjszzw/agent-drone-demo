@@ -92,6 +92,10 @@ class MockExecutor:
         self.current_lng = home_lng
         self.current_height = 0.0
 
+        # 相机状态
+        self.zoom_level = 1.0       # 变焦倍数（1x-56x）
+        self.lens_mode = "zoom"     # wide / zoom / ir
+
     # ==================== Redis 模拟接口 ====================
 
     def _mock_redis_get(self, task_id: str) -> Optional[_MockTaskState]:
@@ -371,6 +375,78 @@ class MockExecutor:
         self._print_mqtt(topic, payload)
         self._progress("云台调整", 1)
         return f"✅ 云台已调整为 {desc}"
+
+    # ==================== 变焦 ====================
+
+    def set_zoom(self, factor: float) -> str:
+        """
+        相机变焦。factor 为变焦倍数（1x-56x）。
+        对应 WVP: CameraFocalLengthSetImpl / CameraFrameZoomImpl
+        """
+        topic = f"dji/device/{self.device_id}/camera/zoom"
+        payload = f'{{"msgId":"{self._msg_id()}","factor":{factor:.1f}}}'
+        self._print_mqtt(topic, payload)
+        self._progress("变焦调节", 1)
+        self.zoom_level = factor
+        return f"✅ 变焦已设置为 {factor:.1f}x"
+
+    # ==================== 镜头切换 ====================
+
+    def switch_lens(self, mode: str) -> str:
+        """
+        切换镜头模式。
+        对应 WVP: CameraModeSwitchImpl
+        """
+        topic = f"dji/device/{self.device_id}/camera/lens/switch"
+        payload = f'{{"msgId":"{self._msg_id()}","mode":"{mode}"}}'
+        self._print_mqtt(topic, payload)
+        self._progress("镜头切换", 1)
+        self.lens_mode = mode
+
+        desc = {"wide": "广角", "zoom": "变焦", "ir": "红外"}.get(mode, mode)
+        return f"✅ 已切换至 {desc} 镜头"
+
+    # ==================== 全景拍照 ====================
+
+    def panorama_photo(self) -> str:
+        """
+        全景拍照。无人机保持稳定悬停约 60s，自动拍摄并合成全景图。
+        对应 WVP: CameraPhotoTakeImpl (panorama mode)
+        """
+        topic = f"dji/device/{self.device_id}/camera/photo/panorama"
+        payload = f'{{"msgId":"{self._msg_id()}","mode":"panorama"}}'
+        self._print_mqtt(topic, payload)
+
+        sim_sec = 4  # Demo 加速，实际约 60s
+        for step in range(1, sim_sec + 1):
+            time.sleep(1)
+            progress = step * 100 // sim_sec
+            bar = "▮" * step + "▯" * (sim_sec - step)
+            print(f"\r  ⏳ 全景拍摄中 [{bar}] {progress}%（需保持悬停）",
+                  end="", flush=True)
+
+            if random.random() < 0.03:
+                print()
+                return "❌ 全景拍摄失败: 无人机晃动过大，请保持悬停后重试"
+
+        print()
+        return "✅ 全景拍照完成，照片: PANO_" + str(int(time.time()) % 100000) + ".jpg"
+
+    # ==================== 相机状态查询 ====================
+
+    def get_camera_status(self) -> str:
+        """查询相机当前参数"""
+        lens = {"wide": "广角", "zoom": "变焦", "ir": "红外"}.get(
+            self.lens_mode, self.lens_mode
+        )
+        return (
+            f"📷 相机状态 [{self.device_id}]:\n"
+            f"  镜头: {lens}\n"
+            f"  变焦: {self.zoom_level:.1f}x\n"
+            f"  录像: {'进行中' if self.recording else '待机'}\n"
+            f"  存储: 可用 128GB / 256GB\n"
+            f"  SD 卡: 正常"
+        )
 
     # ==================== 状态查询 ====================
 
