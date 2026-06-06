@@ -139,8 +139,8 @@ class MockExecutor:
                 state.eta_seconds = total_seconds - elapsed
                 self._mock_redis_set(task_id, state)
 
-                # 模拟偶发故障（3% 概率，只在中途触发）
-                if elapsed > total_seconds * 0.3 and random.random() < 0.03:
+                # 模拟偶发故障（1% 概率，Demo 演示用；生产环境删除此逻辑）
+                if elapsed > total_seconds * 0.3 and random.random() < 0.01:
                     state.status = "failed"
                     state.error = "GPS 信号丢失，无人机已触发自动悬停"
                     self._mock_redis_set(task_id, state)

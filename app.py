@@ -386,6 +386,11 @@ async def execute_plan(request: ChatRequest):
                 results.append(str(result))
                 yield f"data: {json.dumps({'type': 'step_done', 'index': i, 'result': str(result)}, ensure_ascii=False)}\n\n"
 
+                # 工具返回了错误（❌ 或 ⛔ 开头）→ 中止后续步骤
+                if str(result).startswith(("❌", "⛔")):
+                    logger.warning("步骤 %d 失败，中止后续。原因: %s", i + 1, str(result)[:80])
+                    break
+
             except Exception as e:
                 logger.error("步骤执行失败 [%s]: %s", tool_name, e)
                 yield f"data: {json.dumps({'type': 'step_error', 'index': i, 'error': str(e)}, ensure_ascii=False)}\n\n"
