@@ -10,12 +10,14 @@ API:
   GET  /api/agent/status       查询无人机当前状态
   GET  /api/agent/health       健康检查
 """
+import os
 import json
 import queue
 import time
 import logging
 import asyncio
 import threading
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,20 +28,69 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 from config import llm_config, drone_config
 from agent import create_agent
-from tools import set_confirm_handler, set_notify_handler, executor
-from executor import MockExecutor
+from tools import set_confirm_handler, set_notify_handler, executor, ALL_TOOLS
 
 # ── 日志 ──────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("agent-api")
 
-# ── FastAPI 应用 ──────────────────────────────────
+# ── 全局状态 ──────────────────────────────────────
+
+agent = None          # 启动时异步初始化
+mcp_tools_loaded = 0  # 已加载的 MCP 工具数
+_mcp_client = None    # MCP 客户端引用，用于关闭
+
+
+async def _init_agent():
+    """启动时异步初始化 Agent（含 MCP 工具加载）"""
+    global agent, mcp_tools_loaded, _mcp_client
+
+    # 尝试加载高德 MCP 工具
+    amap_key = os.getenv("AMAP_API_KEY", "")
+    if amap_key:
+        try:
+            from mcp_tools import load_amap_tools
+            mcp_tools, _mcp_client = await load_amap_tools(amap_key)
+            ALL_TOOLS.extend(mcp_tools)
+            mcp_tools_loaded = len(mcp_tools)
+            logger.info("✅ 高德 MCP 工具已集成: %d 个", mcp_tools_loaded)
+        except Exception as e:
+            logger.warning("⚠️ MCP 工具加载失败（将仅用坐标模式）: %s", e)
+    else:
+        logger.info("ℹ️ 未设置 AMAP_API_KEY，使用坐标模式（用户需提供 GPS 坐标）")
+
+    agent = create_agent()
+    logger.info("✅ Agent 就绪: %s @ %s | 工具: %d 个",
+                llm_config.model, llm_config.base_url, len(ALL_TOOLS))
+
+
+async def _shutdown():
+    """关闭 MCP 客户端连接"""
+    global _mcp_client
+    if _mcp_client:
+        try:
+            await _mcp_client.__aexit__(None, None, None)
+        except Exception:
+            pass
+
+
+# ── FastAPI 应用（lifespan 管理启动/关闭） ────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("🚀 服务启动中...")
+    await _init_agent()
+    logger.info("✅ 服务就绪")
+    yield
+    logger.info("🛑 服务关闭中...")
+    await _shutdown()
 
 app = FastAPI(
     title="AI Agent 无人机操控",
     description="LangChain + DeepSeek Agent，自然语言控制无人机",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -58,11 +109,6 @@ set_notify_handler(
     )
 )
 logger.warning("⚠️ API 模式：高风险操作自动确认（生产环境需独立确认流程）")
-
-# ── Agent 实例 ────────────────────────────────────
-
-agent = create_agent()
-logger.info("✅ Agent 就绪: %s @ %s", llm_config.model, llm_config.base_url)
 
 
 # ── SSE 回调（桥接 LangChain 事件 → SSE 流） ──────
