@@ -1,4 +1,4 @@
-WVP Copilot：基于 AI Agent 的无人机智能体
+WVP Copilot - 基于 LLM 的无人机 AI Agent 智能体
 上海寰创通信股份有限公司
 2025/04 — 2026/03
 技术栈：Python、LangChain、DeepSeek API、FastAPI、SSE、MCP、LangGraph、Redis
