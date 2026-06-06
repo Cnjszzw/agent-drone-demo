@@ -6,75 +6,235 @@
 <title>AI Agent 无人机操控</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  :root{--bg:#0f1117;--surface:#1a1d27;--card:#1e2130;--border:#2a2d3a;--text:#e1e4e8;--text-dim:#8b949e;--primary:#58a6ff;--success:#3fb950;--warning:#d29922;--danger:#f85149;--radius:12px}
-  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column}
 
-  .header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
-  .header h1{font-size:18px;font-weight:600}
-  .header .status{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--text-dim)}
-  .header .dot{width:8px;height:8px;border-radius:50%}
-  .header .dot.online{background:var(--success)}
-  .stop-btn{background:#dc2626;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.5px}
-  .stop-btn:hover{background:#b91c1c;box-shadow:0 0 12px rgba(220,38,38,.4)}
-  .stop-btn:disabled{opacity:.3;cursor:not-allowed;box-shadow:none}
+  :root{
+    --bg:#0b0e14;--surface:#13171f;--card:#181d27;--border:#232836;
+    --text:#e4e8ee;--text-dim:#747d8c;--text-muted:#545d6b;
+    --primary:#4d9fff;--primary-glow:rgba(77,159,255,.15);--primary-subtle:rgba(77,159,255,.07);
+    --success:#3cc960;--success-glow:rgba(60,201,96,.15);
+    --warning:#e8a820;--warning-glow:rgba(232,168,32,.12);
+    --danger:#f44b4b;--danger-glow:rgba(244,75,75,.15);
+    --radius:10px;--radius-lg:14px;
+  }
 
-  .chat{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px}
-  .chat .empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:14px;text-align:center;line-height:2}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB',sans-serif;
+    background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;
+    -webkit-font-smoothing:antialiased;
+  }
 
-  .msg{max-width:90%;padding:12px 16px;border-radius:var(--radius);font-size:14px;line-height:1.6;animation:fadeIn .2s ease}
-  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-  .msg.user{align-self:flex-end;background:#1f3a5f;border:1px solid #2d5a8e}
-  .msg.agent{align-self:flex-start;background:var(--surface);border:1px solid var(--border)}
-  .msg.error{align-self:center;background:#2d1215;border:1px solid var(--danger);color:var(--danger)}
-  .msg.stop{align-self:center;background:#2d1215;border:2px solid #dc2626;color:#fca5a5;text-align:center;font-weight:600}
-  .session-divider{align-self:center;display:flex;align-items:center;gap:12px;width:100%;padding:8px 0;color:var(--text-dim);font-size:12px}
-  .session-divider::before,.session-divider::after{content:'';flex:1;height:1px;background:var(--border)}
+  /* ── 滚动条 ── */
+  .chat::-webkit-scrollbar{width:5px}
+  .chat::-webkit-scrollbar-track{background:transparent}
+  .chat::-webkit-scrollbar-thumb{background:var(--border);border-radius:10px}
+  .chat::-webkit-scrollbar-thumb:hover{background:var(--text-dim)}
+
+  /* ── 顶栏 ── */
+  .header{
+    background:linear-gradient(180deg,var(--surface) 60%,rgba(19,23,31,.95));
+    border-bottom:1px solid var(--border);padding:14px 24px;
+    display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    position:relative;z-index:10;
+  }
+  .header h1{
+    font-size:17px;font-weight:700;letter-spacing:-.2px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .header h1::before{content:'🚁';font-size:20px}
+  .header .status{
+    display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-dim);
+  }
+  .header .dot{
+    width:7px;height:7px;border-radius:50%;background:var(--success);
+    box-shadow:0 0 6px var(--success-glow);animation:pulse-dot 2s ease-in-out infinite;
+  }
+  @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.5}}
+
+  .stop-btn{
+    background:linear-gradient(135deg,#e53e3e,#c53030);color:#fff;
+    border:none;border-radius:8px;padding:7px 15px;font-size:12px;font-weight:700;
+    cursor:pointer;letter-spacing:.3px;transition:all .2s;
+    box-shadow:0 0 0 0 rgba(229,62,62,.4);
+  }
+  .stop-btn:hover{transform:translateY(-1px);box-shadow:0 0 16px rgba(229,62,62,.5)}
+  .stop-btn:active{transform:translateY(0)}
+  .stop-btn:disabled{opacity:.25;cursor:not-allowed;transform:none;box-shadow:none}
+
+  /* ── 聊天区 ── */
+  .chat{
+    flex:1;overflow-y:auto;padding:24px 24px 16px;
+    display:flex;flex-direction:column;gap:14px;
+    background:radial-gradient(ellipse at 50% 0%,rgba(77,159,255,.03) 0%,transparent 60%);
+  }
+  .chat .empty{
+    flex:1;display:flex;align-items:center;justify-content:center;
+    color:var(--text-muted);font-size:14px;text-align:center;line-height:2.2;
+  }
+
+  /* ── 消息气泡 ── */
+  .msg{
+    max-width:80%;padding:10px 16px;border-radius:var(--radius-lg);
+    font-size:13.5px;line-height:1.65;animation:msgIn .25s cubic-bezier(.2,.8,.2,1);
+    transition:box-shadow .2s;
+  }
+  @keyframes msgIn{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+  .msg.user{
+    align-self:flex-end;
+    background:linear-gradient(135deg,rgba(77,159,255,.25),rgba(77,159,255,.12));
+    border:1px solid rgba(77,159,255,.2);border-bottom-right-radius:4px;
+  }
+  .msg.agent{
+    align-self:flex-start;
+    background:var(--surface);border:1px solid var(--border);
+    border-bottom-left-radius:4px;
+  }
+  .msg.error{
+    align-self:center;
+    background:rgba(244,75,75,.08);border:1px solid rgba(244,75,75,.2);
+    color:var(--danger);font-size:12.5px;max-width:95%;
+  }
+  .msg.stop{
+    align-self:center;max-width:95%;
+    background:rgba(244,75,75,.06);border:1.5px solid rgba(244,75,75,.3);
+    color:#fca5a5;text-align:center;font-weight:600;font-size:13px;
+    box-shadow:0 0 20px rgba(244,75,75,.08);
+  }
+  .session-divider{
+    align-self:center;display:flex;align-items:center;gap:14px;
+    width:100%;padding:6px 0;color:var(--text-muted);font-size:11px;
+    user-select:none;
+  }
+  .session-divider::before,.session-divider::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,transparent,var(--border),transparent)}
 
   /* ── 规划卡片 ── */
-  .plan-card{align-self:flex-start;width:100%;max-width:600px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
-  .plan-card .plan-header{background:var(--surface);padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
-  .plan-card .plan-header .icon{font-size:18px}
-  .plan-card .plan-header h3{font-size:15px;flex:1}
-  .plan-card .plan-body{padding:16px 18px}
-  .plan-card .objective{color:var(--text);font-size:14px;margin-bottom:14px;padding:10px 14px;background:rgba(88,166,255,.08);border-radius:8px;border-left:3px solid var(--primary)}
-  .plan-card .steps-title{font-size:12px;color:var(--text-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
-  .plan-card .step{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:13px;color:var(--text)}
-  .plan-card .step .step-icon{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
-  .plan-card .step .step-icon.pending{border:2px solid var(--border);color:var(--text-dim)}
-  .plan-card .step .step-icon.running{border:2px solid var(--warning);animation:spin 1s linear infinite}
-  .plan-card .step .step-icon.done{background:var(--success);color:#fff}
-  .plan-card .step .step-icon.fail{background:var(--danger);color:#fff}
+  .plan-card{
+    align-self:flex-start;width:100%;max-width:620px;
+    background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);
+    overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.25);
+  }
+  .plan-card .plan-header{
+    background:linear-gradient(180deg,rgba(77,159,255,.06),transparent);
+    padding:16px 20px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:10px;
+  }
+  .plan-card .plan-header .icon{font-size:20px}
+  .plan-card .plan-header h3{font-size:15px;font-weight:700;letter-spacing:-.2px;flex:1}
+  .plan-card .plan-body{padding:18px 20px}
+  .plan-card .objective{
+    color:var(--text);font-size:13.5px;margin-bottom:16px;
+    padding:12px 16px;background:var(--primary-subtle);
+    border-radius:var(--radius);border-left:3px solid var(--primary);
+    line-height:1.6;
+  }
+  .plan-card .steps-title{
+    font-size:11px;color:var(--text-muted);margin-bottom:10px;
+    text-transform:uppercase;letter-spacing:1.5px;font-weight:600;
+  }
+  .plan-card .step{
+    display:flex;align-items:center;gap:12px;padding:9px 0;
+    font-size:13px;color:var(--text);transition:background .15s;
+    border-radius:6px;padding-left:8px;padding-right:8px;margin:0 -8px;
+  }
+  .plan-card .step:hover{background:rgba(255,255,255,.015)}
+  .plan-card .step .step-icon{
+    width:24px;height:24px;border-radius:50%;display:flex;
+    align-items:center;justify-content:center;font-size:11px;flex-shrink:0;
+    transition:all .25s;
+  }
+  .plan-card .step .step-icon.pending{
+    border:2px solid var(--border);color:var(--text-muted);
+    background:rgba(255,255,255,.02);
+  }
+  .plan-card .step .step-icon.running{
+    border:2px solid var(--warning);color:var(--warning);
+    animation:spin 1s linear infinite;box-shadow:0 0 8px var(--warning-glow);
+  }
+  .plan-card .step .step-icon.done{
+    background:var(--success);color:#fff;border:2px solid var(--success);
+    box-shadow:0 0 6px var(--success-glow);
+  }
+  .plan-card .step .step-icon.fail{
+    background:var(--danger);color:#fff;border:2px solid var(--danger);
+    box-shadow:0 0 6px var(--danger-glow);
+  }
   @keyframes spin{to{transform:rotate(360deg)}}
-  .plan-card .step .step-desc{flex:1}
-  .plan-card .step .step-result{font-size:11px;color:var(--success);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .plan-card .preflight{padding:12px 14px;margin-top:12px;background:rgba(210,153,34,.06);border-radius:8px;font-size:12px;color:var(--warning)}
-  .plan-card .preflight span{margin-right:16px}
-  .plan-card .plan-actions{display:flex;gap:8px;padding:14px 18px;border-top:1px solid var(--border)}
-  .plan-card .plan-actions button{flex:1;padding:10px 16px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:opacity .2s}
-  .plan-card .plan-actions button:hover{opacity:.85}
-  .plan-card .plan-actions .btn-execute{background:var(--primary);color:#fff}
-  .plan-card .plan-actions .btn-cancel{background:var(--border);color:var(--text)}
-  .plan-card .plan-actions button:disabled{opacity:.3;cursor:not-allowed}
+  .plan-card .step .step-desc{flex:1;font-size:13px}
+  .plan-card .step .step-result{
+    font-size:11px;color:var(--success);max-width:200px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .plan-card .preflight{
+    padding:12px 16px;margin-top:14px;
+    background:var(--warning-glow);border-radius:var(--radius);
+    font-size:11.5px;color:var(--warning);line-height:1.6;
+  }
+  .plan-card .preflight span{margin-right:20px;opacity:.85}
+  .plan-card .plan-actions{display:flex;gap:10px;padding:16px 20px;border-top:1px solid var(--border)}
+  .plan-card .plan-actions button{
+    flex:1;padding:11px 20px;border-radius:var(--radius);font-size:13.5px;font-weight:600;
+    cursor:pointer;border:none;transition:all .2s;
+  }
+  .plan-card .plan-actions button:hover{transform:translateY(-1px)}
+  .plan-card .plan-actions button:active{transform:translateY(0)}
+  .plan-card .plan-actions .btn-execute{
+    background:linear-gradient(135deg,var(--primary),#3d8ae8);color:#fff;
+    box-shadow:0 2px 12px var(--primary-glow);
+  }
+  .plan-card .plan-actions .btn-execute:hover{box-shadow:0 4px 20px var(--primary-glow)}
+  .plan-card .plan-actions .btn-cancel{
+    background:var(--surface);color:var(--text-dim);border:1px solid var(--border);
+  }
+  .plan-card .plan-actions .btn-cancel:hover{color:var(--text);border-color:var(--text-dim)}
+  .plan-card .plan-actions button:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
 
-  .quick-cmds{padding:8px 20px;display:flex;gap:8px;flex-wrap:wrap;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0}
-  .quick-cmds button{background:#1a2332;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
-  .quick-cmds button:hover{border-color:var(--primary);color:var(--primary)}
+  /* ── 快捷指令 ── */
+  .quick-cmds{
+    padding:8px 24px 10px;display:flex;gap:8px;flex-wrap:wrap;
+    background:var(--surface);border-top:1px solid var(--border);flex-shrink:0;
+  }
+  .quick-cmds button{
+    background:rgba(255,255,255,.025);border:1px solid var(--border);
+    color:var(--text-dim);border-radius:20px;padding:5px 14px;
+    font-size:12px;cursor:pointer;transition:all .2s;
+  }
+  .quick-cmds button:hover{
+    border-color:var(--primary);color:var(--primary);
+    background:var(--primary-subtle);transform:translateY(-1px);
+  }
 
-  .input-area{background:var(--surface);border-top:1px solid var(--border);padding:14px 20px;display:flex;gap:10px;flex-shrink:0}
-  .input-area input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none}
-  .input-area input:focus{border-color:var(--primary)}
-  .input-area input::placeholder{color:var(--text-dim)}
-  .input-area button{background:var(--primary);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer}
-  .input-area button:hover{opacity:.85}
-  .input-area button:disabled{opacity:.4;cursor:not-allowed}
+  /* ── 输入区 ── */
+  .input-area{
+    background:var(--surface);border-top:1px solid var(--border);
+    padding:14px 24px;display:flex;gap:12px;flex-shrink:0;
+  }
+  .input-area input{
+    flex:1;background:var(--bg);border:1.5px solid var(--border);
+    border-radius:var(--radius);padding:11px 16px;color:var(--text);
+    font-size:14px;outline:none;transition:border-color .2s,box-shadow .2s;
+  }
+  .input-area input:focus{
+    border-color:var(--primary);
+    box-shadow:0 0 0 3px var(--primary-glow);
+  }
+  .input-area input::placeholder{color:var(--text-muted)}
+  .input-area button{
+    background:linear-gradient(135deg,var(--primary),#3d8ae8);color:#fff;
+    border:none;border-radius:var(--radius);padding:11px 24px;
+    font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;
+    box-shadow:0 2px 12px var(--primary-glow);
+  }
+  .input-area button:hover{transform:translateY(-1px);box-shadow:0 4px 20px var(--primary-glow)}
+  .input-area button:active{transform:translateY(0)}
+  .input-area button:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
 </style>
 </head>
 <body>
 
 <div class="header">
-  <h1>🚁 AI Agent 无人机操控</h1>
+  <h1>AI Agent 无人机操控</h1>
   <div class="status">
-    <span id="droneInfo">加载中...</span><span class="dot online"></span>
+    <span id="droneInfo">加载中...</span><span class="dot"></span>
     <button class="stop-btn" id="stopBtn" onclick="emergencyStop()">⏹ 急停</button>
   </div>
 </div>
@@ -111,7 +271,6 @@ function scrollBottom(){chat.scrollTop=chat.scrollHeight}
 function escapeHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
 function addMsg(type,html){const d=document.createElement('div');d.className='msg '+type;d.innerHTML=html;chat.appendChild(d);scrollBottom();return d}
 
-// ── 紧急停止 ──
 async function emergencyStop(){
   if(!isStreaming&&!isEmergencyStopped)return;
   if(abortController){abortController.abort();abortController=null}
@@ -124,32 +283,22 @@ async function emergencyStop(){
   setTimeout(fetchStatus,500)
 }
 
-// ── 状态轮询 ──
 async function fetchStatus(){
   try{const r=await fetch('/api/agent/status');const d=await r.json();const l=d.status.split('\n');const b=l.find(x=>x.includes('电量'));droneInfo.textContent=b?b.trim():d.device_id}catch(e){}
 }
 
-// ── Phase 1: 生成规划 ──
 async function sendMessage(){
   const msg=input.value.trim();
   if(!msg||isStreaming)return;
   input.value='';isEmergencyStopped=false;stopBtn.disabled=false;stopBtn.textContent='⏹ 急停';
   try{await fetch('/api/agent/reset',{method:'POST'})}catch(e){}
-
   const wasStopped=isEmergencyStopped;isEmergencyStopped=false;
   if(wasStopped){const d=document.createElement('div');d.className='session-divider';d.textContent='新会话';chat.appendChild(d)}
-
-  // 移除欢迎语
   const empty=chat.querySelector('.empty');if(empty)empty.remove();
-
   addMsg('user',escapeHtml(msg));
   isStreaming=true;sendBtn.disabled=true;input.disabled=true;
-
   try{
-    const resp=await fetch('/api/agent/plan',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:msg})
-    });
+    const resp=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});
     if(!resp.ok){const e=await resp.json();throw new Error(e.detail||'规划失败')}
     const data=await resp.json();
     renderPlanCard(data.plan);
@@ -159,12 +308,9 @@ async function sendMessage(){
   }
 }
 
-// ── 渲染规划卡片 ──
 function renderPlanCard(plan){
   currentPlanData=plan;
-  const steps=plan.steps||[];
-  const preflight=plan.preflight||{};
-
+  const steps=plan.steps||[],preflight=plan.preflight||{};
   let stepsHtml='';
   steps.forEach((s,i)=>{
     stepsHtml+=`<div class="step" id="step-${i}">
@@ -173,7 +319,6 @@ function renderPlanCard(plan){
       <div class="step-result"></div>
     </div>`;
   });
-
   const card=document.createElement('div');
   card.className='plan-card';
   card.innerHTML=`
@@ -195,7 +340,6 @@ function renderPlanCard(plan){
   scrollBottom();
 }
 
-// ── 取消规划 ──
 function cancelPlan(btn){
   btn.disabled=true;
   btn.parentElement.querySelector('.btn-execute').disabled=true;
@@ -203,57 +347,42 @@ function cancelPlan(btn){
   isStreaming=false;sendBtn.disabled=false;input.disabled=false;
 }
 
-// ── Phase 3: 执行规划 ──
 async function executePlan(btn){
   btn.disabled=true;
   btn.parentElement.querySelector('.btn-cancel').disabled=true;
   btn.textContent='执行中...';
-
   const plan=currentPlanData;
   if(!plan){addMsg('error','❌ 规划数据丢失');return}
   const planStr=JSON.stringify(plan);
   const steps=plan.steps||[];
-  const total=steps.length;
   abortController=new AbortController();
-
   try{
-    const resp=await fetch('/api/agent/execute',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:planStr}),
-      signal:abortController.signal
-    });
+    const resp=await fetch('/api/agent/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:planStr}),signal:abortController.signal});
     if(!resp.ok){const e=await resp.json();throw new Error(e.detail||'执行失败')}
-
     const reader=resp.body.getReader();
     const decoder=new TextDecoder();
     let buf='';
-
     while(true){
-      const{ done,value}=await reader.read();
+      const{done,value}=await reader.read();
       if(done)break;
       buf+=decoder.decode(value,{stream:true});
       const lines=buf.split('\n');buf=lines.pop()||'';
       for(const line of lines){
         if(!line.startsWith('data: '))continue;
-        try{
-          const evt=JSON.parse(line.slice(6));
-          handleStepEvent(evt,steps);
-        }catch(e){}
+        try{const evt=JSON.parse(line.slice(6));handleStepEvent(evt,steps)}catch(e){}
       }
     }
   }catch(e){
     if(e.name!=='AbortError')addMsg('error','❌ '+escapeHtml(e.message))
   }finally{
     isStreaming=false;sendBtn.disabled=false;input.disabled=false;
-    abortController=null;btn.textContent='已完成';
-    fetchStatus()
+    abortController=null;btn.textContent='已完成';fetchStatus()
   }
 }
 
 function handleStepEvent(evt,steps){
   const card=currentPlanCard;
   if(!card)return;
-
   if(evt.type==='step_start'){
     const el=document.getElementById('step-'+evt.index);
     if(el){
@@ -284,7 +413,6 @@ function handleStepEvent(evt,steps){
   }
 }
 
-// ── 初始化 ──
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
 document.getElementById('quickCmds').addEventListener('click',e=>{if(e.target.tagName==='BUTTON'){input.value=e.target.dataset.cmd;sendMessage()}});
 fetchStatus();setInterval(fetchStatus,15000);
