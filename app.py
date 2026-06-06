@@ -217,14 +217,15 @@ async def chat_stream(request: ChatRequest):
     thread.start()
 
     async def generate():
+        loop = asyncio.get_event_loop()
         while True:
             try:
-                event = await asyncio.wait_for(
-                    asyncio.to_thread(lambda: event_queue.get(timeout=0.5)),
-                    timeout=1.0,
+                # 短 timeout（100ms），事件到达立即推送
+                event = await loop.run_in_executor(
+                    None, lambda: event_queue.get(timeout=0.1)
                 )
-            except (asyncio.TimeoutError, queue.Empty):
-                # 心跳注释，保持 SSE 连接活跃（浏览器不触发事件）
+            except queue.Empty:
+                # 无事件时发心跳保持连接
                 yield ": heartbeat\n\n"
                 continue
 
