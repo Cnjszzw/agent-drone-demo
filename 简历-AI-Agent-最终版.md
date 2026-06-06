@@ -1,4 +1,4 @@
-AI Agent 无人机自然语言操控系统
+WVP Copilot：基于 AI Agent 的无人机智能体操控系统
 上海寰创通信股份有限公司
 2025/04 — 2026/03
 技术栈：Python、LangChain、DeepSeek API、FastAPI、SSE、MCP、LangGraph、Redis
