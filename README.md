@@ -9,57 +9,46 @@
 | 层 | 技术 | 说明 |
 |---|------|------|
 | Agent 框架 | LangChain | `@tool` 装饰器 + `AgentExecutor` ReAct 编排 |
-| LLM | DeepSeek | OpenAI 兼容接口，¥1 够调试几十次 |
-| API 服务 | FastAPI + Uvicorn | RESTful 接口 + Swagger 自动文档 |
-| 语言 | Python 3.10+ | |
+| LLM | DeepSeek | OpenAI 兼容接口 |
+| API 服务 | FastAPI + Uvicorn | SSE 流式 + Swagger 自动文档 |
+| MCP 外部工具 | langchain-mcp-adapters | 高德地图地理编码（地名→坐标） |
+| 语言 | Python 3.11+ | |
 
-## 快速开始
-
-### 1. 环境准备
-
-```bash
-# Python 3.10+ 环境（检查版本）
-python3 --version
-
-# 克隆/进入项目目录
-cd agent-demo
-```
-
-### 2. 安装依赖
+## 启动（三步）
 
 ```bash
-# 创建虚拟环境（推荐）
-python3 -m venv .venv
-source .venv/bin/activate  # macOS/Linux
-# .venv\Scripts\activate   # Windows
+# 1. 进入项目 + 激活虚拟环境
+cd /Users/zhaozhiwen/CodeRepo/WVP/agent-demo
+source .venv/bin/activate
 
-# 安装依赖
-pip install -r requirements.txt
-```
-
-### 3. 配置 API Key
-
-```bash
-# 复制配置文件
-cp .env.example .env
-
-# 编辑 .env，填入你的 DeepSeek API Key
-# 注册地址: https://platform.deepseek.com
-# 文件内容:
-#   DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
-```
-
-### 4. 运行
-
-```bash
-# 启动（前端聊天框 + API + SSE 流式）
+# 2. 启动服务
 uvicorn app:app --reload --port 8000
+
+# 3. 浏览器打开
+open http://localhost:8000
 ```
 
-浏览器打开：**http://localhost:8000**
+### 首次安装
 
-- 聊天框界面直接输入自然语言指令
-- Swagger 文档：http://localhost:8000/docs
+```bash
+cd /Users/zhaozhiwen/CodeRepo/WVP/agent-demo
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# 编辑 .env 填入 DEEPSEEK_API_KEY 和 AMAP_API_KEY
+```
+
+### .env 配置
+
+```bash
+DEEPSEEK_API_KEY=sk-xxxxxxxx   # 必填，注册: https://platform.deepseek.com
+AMAP_API_KEY=xxxxxxxx          # 可选，地名→坐标，不填则仅支持 GPS 坐标输入
+```
+
+### PyCharm 设置
+
+`Settings → Project → Python Interpreter → 齿轮 → Add → Existing → 选 agent-demo/.venv/bin/python3.11`
 
 ## 使用方式
 
