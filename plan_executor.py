@@ -138,77 +138,80 @@ def execute_plan_stream(plan: dict, agent, event_queue):
       all_done:    { type: "all_done",    summary: "..." }
     """
     import threading
+    import asyncio
 
     steps = plan.get("steps", [])
     total = len(steps)
     results = []
 
-    def run():
+    async def _call_tool(tool_func, args):
+        """MCP 工具仅支持 ainvoke，统一用异步调用"""
+        if hasattr(tool_func, 'ainvoke'):
+            return await tool_func.ainvoke(args)
+        return tool_func.invoke(args)
+
+    async def _execute_all():
         for i, step in enumerate(steps):
             tool_name = step.get("tool", "")
-            tool_args = step.get("tool_args", {})
+            tool_args = dict(step.get("tool_args", {}))
 
-            # 发送 step_start
             event_queue.put({
                 "type": "step_start",
-                "index": i,
-                "total": total,
+                "index": i, "total": total,
                 "description": step.get("description", tool_name),
                 "tool": tool_name,
             })
 
-            # 查找并调用工具
             tool_func = _find_tool(tool_name)
             if tool_func is None:
                 event_queue.put({
-                    "type": "step_error",
-                    "index": i,
+                    "type": "step_error", "index": i,
                     "error": f"未找到工具: {tool_name}",
                 })
                 results.append(f"❌ 未知工具 {tool_name}")
-                continue
+                break  # 中止
 
             try:
-                # 如果上一步是 maps_geo，提取坐标填入当前 fly_to_point
+                # maps_geo → fly_to_point 坐标自动填充
                 if tool_name == "fly_to_point" and i > 0:
-                    prev_result = results[-1] if results else ""
-                    coords = _extract_coords_from_geo_result(prev_result)
+                    prev = results[-1] if results else ""
+                    coords = _extract_coords_from_geo_result(prev)
                     if coords and tool_args.get("lat") is None:
                         tool_args["lat"] = coords["lat"]
                         tool_args["lng"] = coords["lng"]
-                        logger.info("  📍 由 maps_geo 结果填充坐标: %.4f, %.4f",
+                        logger.info("  📍 maps_geo→fly_to_point: %.4f, %.4f",
                                     coords["lat"], coords["lng"])
 
-                result = tool_func.invoke(tool_args)
+                result = await _call_tool(tool_func, tool_args)
                 results.append(str(result))
 
                 event_queue.put({
-                    "type": "step_done",
-                    "index": i,
+                    "type": "step_done", "index": i,
                     "result": str(result),
                 })
 
             except Exception as e:
                 logger.error("步骤执行失败 [%s]: %s", tool_name, e)
                 event_queue.put({
-                    "type": "step_error",
-                    "index": i,
+                    "type": "step_error", "index": i,
                     "error": str(e),
                 })
                 results.append(f"❌ {tool_name}: {e}")
+                break  # 失败立即中止
 
-        # 全部完成
-        summary_parts = [plan.get("objective", "任务完成")]
         event_queue.put({
             "type": "all_done",
-            "summary": "任务执行完成。\n" + "\n".join(
-                f"  [{i+1}] {s.get('description', '')} → {r[:60]}"
+            "summary": "\n".join(
+                f"  {'✅' if not r.startswith('❌') else '❌'} [{i+1}] {s.get('description', '')}"
                 for i, (s, r) in enumerate(zip(steps, results))
             ) if results else "无步骤",
             "results": results,
         })
 
-    t = threading.Thread(target=run, daemon=True)
+    def _run_sync():
+        asyncio.run(_execute_all())
+
+    t = threading.Thread(target=_run_sync, daemon=True)
     t.start()
 
 
