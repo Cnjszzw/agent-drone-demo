@@ -364,10 +364,13 @@ async def execute_plan(request: ChatRequest):
                 # 清理 LLM 参数（height: "100m" → 100）
                 tool_args = _clean_tool_args(tool_name, tool_args)
 
-                # maps_geo → fly_to_point 坐标自动填充
+                # maps_geo → fly_to_point: LLM 选最佳候选项 + 坐标填充
                 if tool_name == "fly_to_point" and i > 0:
                     prev = results[-1] if results else ""
-                    coords = _extract_coords_from_geo_result(prev)
+                    # 从上一步的 maps_geo 参数中拿地址名
+                    prev_step = plan["steps"][i - 1]
+                    address = prev_step.get("tool_args", {}).get("address", "")
+                    coords = _extract_coords_from_geo_result(prev, address)
                     if coords and tool_args.get("lat") is None:
                         tool_args["lat"] = coords["lat"]
                         tool_args["lng"] = coords["lng"]

@@ -223,15 +223,73 @@ def _find_tool(tool_name: str):
     return None
 
 
-def _extract_coords_from_geo_result(result_str: str) -> dict | None:
-    """从 maps_geo 返回的 JSON 中提取坐标，优先选取最后一个候选项（通常最精确）"""
+def _extract_coords_from_geo_result(result_str: str, address: str = "") -> dict | None:
+    """
+    从 maps_geo 返回的多个候选项中，让 LLM 选择最匹配的一个。
+
+    为什么不让代码硬编码"取第一个/最后一个":
+      高德返回的候选项排序逻辑不确定（不同版本/不同地区可能不同）。
+      硬编码取某个位置可能选错——云南的"陆家嘴"和上海的"陆家嘴"。
+      正确的做法是把候选项丢回 LLM，LLM 根据上下文判断用户指的是哪个。
+    """
     import re
-    # maps_geo 返回: {"results":[{"location":"121.50,31.23",...}, ...]}
-    matches = re.findall(r'"location"\s*:\s*"([\d.]+),([\d.]+)"', result_str)
-    if not matches:
-        return None
-    # 取最后一个（高德通常把最匹配的放在最后）
-    lng, lat = matches[-1]
+    candidates = re.findall(
+        r'\{[^}]*?"location"\s*:\s*"([\d.]+),([\d.]+)"[^}]*?"district"\s*:\s*"([^"]*)"[^}]*?"city"\s*:\s*"([^"]*)"[^}]*?',
+        result_str
+    )
+    # 如果上面的正则不够，回退到只提取坐标
+    if not candidates:
+        candidates = re.findall(r'"location"\s*:\s*"([\d.]+),([\d.]+)"', result_str)
+        if not candidates:
+            return None
+        # 只有一个或无法区分——取第一个
+        lng, lat = candidates[0]
+        return {"lng": float(lng), "lat": float(lat)}
+
+    if len(candidates) == 1:
+        lng, lat = candidates[0][0], candidates[0][1]
+        return {"lng": float(lng), "lat": float(lat)}
+
+    # 多个候选项——让 LLM 选
+    import json as _json
+    candidate_list = []
+    for idx, c in enumerate(candidates):
+        candidate_list.append(
+            f"[{idx}] 城市:{c[3]} 区:{c[2]} 坐标:({c[0]},{c[1]})"
+        )
+    candidates_text = "\n".join(candidate_list)
+
+    prompt = (
+        f"用户想飞到「{address}」，高德地图返回了以下候选项：\n"
+        f"{candidates_text}\n\n"
+        f"请选择最匹配的一个候选项，只输出数字序号（如 5），不要其他内容。"
+    )
+
+    llm = ChatOpenAI(
+        model=llm_config.model,
+        openai_api_key=llm_config.api_key,
+        openai_api_base=llm_config.base_url,
+        temperature=0,
+        max_tokens=10,
+        timeout=llm_config.timeout,
+    )
+
+    response = llm.invoke(prompt)
+    choice_text = response.content.strip()
+    logger.info("  🤖 LLM 选择候选项: %s", choice_text)
+
+    # 提取数字
+    try:
+        choice_idx = int(re.search(r'\d+', choice_text).group())
+    except (ValueError, AttributeError):
+        choice_idx = len(candidates) - 1  # 默认最后一个
+
+    if 0 <= choice_idx < len(candidates):
+        lng, lat = candidates[choice_idx][0], candidates[choice_idx][1]
+        return {"lng": float(lng), "lat": float(lat)}
+
+    # 兜底
+    lng, lat = candidates[-1][0], candidates[-1][1]
     return {"lng": float(lng), "lat": float(lat)}
 
 
