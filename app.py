@@ -292,6 +292,94 @@ async def chat_stream(request: ChatRequest):
     )
 
 
+# ── 规划 & 执行（DJI Copilot 风格三段式） ──────────
+
+from plan_executor import generate_plan, execute_plan_stream
+
+
+@app.post("/api/agent/plan")
+def create_plan(request: ChatRequest):
+    """
+    Phase 1: 生成任务规划（DJI Copilot 风格）。
+
+    返回结构化 JSON: { objective, steps, preflight }
+    前端展示"规划确认卡片"——用户审核步骤和飞前检查项后手动点击执行。
+    """
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="指令不能为空")
+
+    logger.info("📋 生成规划: %s", request.message)
+    try:
+        plan = generate_plan(request.message)
+        return {"success": True, "plan": plan}
+    except Exception as e:
+        logger.error("规划失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"规划生成失败: {str(e)}")
+
+
+@app.post("/api/agent/execute")
+async def execute_plan(request: ChatRequest):
+    """
+    Phase 3: 用户确认后，逐步骤执行规划（SSE 流式进度）。
+
+    事件类型:
+      step_start:  { type:"step_start", index:0, total:6, description:"...", tool:"..." }
+      step_done:   { type:"step_done",  index:0, result:"✅ ..." }
+      step_error:  { type:"step_error", index:0, error:"..." }
+      all_done:    { type:"all_done",  summary:"...", results:[...] }
+
+    前端渲染:
+      ○ 等待 → ◐ 进行中（转圈动画）→ ✓ 已完成（绿色打勾）→ ✗ 失败（红色叉）
+    """
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="plan 不能为空")
+
+    try:
+        plan = json.loads(request.message)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="plan 必须是有效 JSON")
+
+    if not plan.get("steps"):
+        raise HTTPException(status_code=400, detail="plan.steps 为空")
+
+    logger.info("▶ 执行规划: %d 步", len(plan["steps"]))
+
+    event_queue: queue.Queue = queue.Queue()
+
+    # 在后台线程逐步骤执行
+    execute_plan_stream(plan, None, event_queue)
+
+    async def generate():
+        loop = asyncio.get_event_loop()
+        while True:
+            try:
+                event = await loop.run_in_executor(
+                    None, lambda: event_queue.get(timeout=0.1)
+                )
+            except queue.Empty:
+                yield ": heartbeat\n\n"
+                continue
+
+            if event is None:
+                break
+
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+            if event["type"] in ("all_done", "step_error"):
+                # 最后一步错误也继续发送，等 all_done
+                pass
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 # ── 静态文件（前端聊天框） ────────────────────────
 # 放在最后，确保 API 路由优先匹配
 

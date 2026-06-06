@@ -5,511 +5,287 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Agent 无人机操控</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#0f1117;--surface:#1a1d27;--card:#1e2130;--border:#2a2d3a;--text:#e1e4e8;--text-dim:#8b949e;--primary:#58a6ff;--success:#3fb950;--warning:#d29922;--danger:#f85149;--radius:12px}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column}
 
-  :root {
-    --bg: #0f1117;
-    --surface: #1a1d27;
-    --border: #2a2d3a;
-    --text: #e1e4e8;
-    --text-dim: #8b949e;
-    --primary: #58a6ff;
-    --success: #3fb950;
-    --warning: #d29922;
-    --danger: #f85149;
-    --user-bg: #1f3a5f;
-    --agent-bg: #1a1d27;
-    --tool-bg: #1a2332;
-    --radius: 12px;
-  }
+  .header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+  .header h1{font-size:18px;font-weight:600}
+  .header .status{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--text-dim)}
+  .header .dot{width:8px;height:8px;border-radius:50%}
+  .header .dot.online{background:var(--success)}
+  .stop-btn{background:#dc2626;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.5px}
+  .stop-btn:hover{background:#b91c1c;box-shadow:0 0 12px rgba(220,38,38,.4)}
+  .stop-btn:disabled{opacity:.3;cursor:not-allowed;box-shadow:none}
 
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
+  .chat{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px}
+  .chat .empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:14px;text-align:center;line-height:2}
 
-  /* 顶栏 */
-  .header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 12px 20px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-shrink: 0;
-  }
-  .header h1 { font-size: 18px; font-weight: 600; }
-  .header h1 .icon { margin-right: 6px; }
-  .header .status {
-    display: flex; align-items: center; gap: 12px;
-    font-size: 13px; color: var(--text-dim);
-  }
-  .header .status .dot { width: 8px; height: 8px; border-radius: 50%; }
-  .header .status .dot.online { background: var(--success); }
-  .stop-btn {
-    background: #dc2626; color: #fff;
-    border: none; border-radius: 8px;
-    padding: 8px 16px; font-size: 13px; font-weight: 700;
-    cursor: pointer; transition: all 0.2s;
-    letter-spacing: 0.5px;
-  }
-  .stop-btn:hover { background: #b91c1c; box-shadow: 0 0 12px rgba(220,38,38,0.4); }
-  .stop-btn:disabled { opacity: 0.3; cursor: not-allowed; box-shadow: none; }
-  .message.stop-notice {
-    align-self: center;
-    background: #2d1215;
-    border: 2px solid #dc2626;
-    color: #fca5a5;
-    font-size: 14px; font-weight: 600;
-    text-align: center; max-width: 100%;
-  }
-  .session-divider {
-    align-self: center;
-    display: flex; align-items: center; gap: 12px;
-    width: 100%; padding: 8px 0;
-    color: var(--text-dim); font-size: 12px;
-  }
-  .session-divider::before, .session-divider::after {
-    content: ''; flex: 1; height: 1px;
-    background: var(--border);
-  }
+  .msg{max-width:90%;padding:12px 16px;border-radius:var(--radius);font-size:14px;line-height:1.6;animation:fadeIn .2s ease}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .msg.user{align-self:flex-end;background:#1f3a5f;border:1px solid #2d5a8e}
+  .msg.agent{align-self:flex-start;background:var(--surface);border:1px solid var(--border)}
+  .msg.error{align-self:center;background:#2d1215;border:1px solid var(--danger);color:var(--danger)}
+  .msg.stop{align-self:center;background:#2d1215;border:2px solid #dc2626;color:#fca5a5;text-align:center;font-weight:600}
+  .session-divider{align-self:center;display:flex;align-items:center;gap:12px;width:100%;padding:8px 0;color:var(--text-dim);font-size:12px}
+  .session-divider::before,.session-divider::after{content:'';flex:1;height:1px;background:var(--border)}
 
-  /* 聊天区域 */
-  .chat {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
+  /* ── 规划卡片 ── */
+  .plan-card{align-self:flex-start;width:100%;max-width:600px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .plan-card .plan-header{background:var(--surface);padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+  .plan-card .plan-header .icon{font-size:18px}
+  .plan-card .plan-header h3{font-size:15px;flex:1}
+  .plan-card .plan-body{padding:16px 18px}
+  .plan-card .objective{color:var(--text);font-size:14px;margin-bottom:14px;padding:10px 14px;background:rgba(88,166,255,.08);border-radius:8px;border-left:3px solid var(--primary)}
+  .plan-card .steps-title{font-size:12px;color:var(--text-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
+  .plan-card .step{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:13px;color:var(--text)}
+  .plan-card .step .step-icon{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+  .plan-card .step .step-icon.pending{border:2px solid var(--border);color:var(--text-dim)}
+  .plan-card .step .step-icon.running{border:2px solid var(--warning);animation:spin 1s linear infinite}
+  .plan-card .step .step-icon.done{background:var(--success);color:#fff}
+  .plan-card .step .step-icon.fail{background:var(--danger);color:#fff}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .plan-card .step .step-desc{flex:1}
+  .plan-card .step .step-result{font-size:11px;color:var(--success);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .plan-card .preflight{padding:12px 14px;margin-top:12px;background:rgba(210,153,34,.06);border-radius:8px;font-size:12px;color:var(--warning)}
+  .plan-card .preflight span{margin-right:16px}
+  .plan-card .plan-actions{display:flex;gap:8px;padding:14px 18px;border-top:1px solid var(--border)}
+  .plan-card .plan-actions button{flex:1;padding:10px 16px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:opacity .2s}
+  .plan-card .plan-actions button:hover{opacity:.85}
+  .plan-card .plan-actions .btn-execute{background:var(--primary);color:#fff}
+  .plan-card .plan-actions .btn-cancel{background:var(--border);color:var(--text)}
+  .plan-card .plan-actions button:disabled{opacity:.3;cursor:not-allowed}
 
-  .message {
-    max-width: 85%;
-    padding: 12px 16px;
-    border-radius: var(--radius);
-    font-size: 14px;
-    line-height: 1.6;
-    animation: fadeIn 0.2s ease;
-  }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .quick-cmds{padding:8px 20px;display:flex;gap:8px;flex-wrap:wrap;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0}
+  .quick-cmds button{background:#1a2332;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+  .quick-cmds button:hover{border-color:var(--primary);color:var(--primary)}
 
-  .message.user {
-    align-self: flex-end;
-    background: var(--user-bg);
-    border: 1px solid #2d5a8e;
-  }
-  .message.agent {
-    align-self: flex-start;
-    background: var(--agent-bg);
-    border: 1px solid var(--border);
-  }
-  .message.tool {
-    align-self: flex-start;
-    background: var(--tool-bg);
-    border: 1px solid #1f4a6b;
-    border-left: 3px solid var(--primary);
-  }
-  .message.tool .tool-name {
-    font-size: 12px; color: var(--primary); margin-bottom: 4px;
-    font-weight: 600;
-  }
-  .message.tool .tool-input {
-    font-size: 12px; color: var(--text-dim); margin-bottom: 4px;
-    font-family: 'SF Mono', Menlo, monospace;
-  }
-  .message.tool .tool-output {
-    color: var(--success);
-    font-size: 13px;
-  }
-  .message.error {
-    align-self: center;
-    background: #2d1215;
-    border: 1px solid var(--danger);
-    color: var(--danger);
-    font-size: 13px;
-  }
-  .message.system {
-    align-self: center;
-    font-size: 12px;
-    color: var(--text-dim);
-    background: none;
-    border: none;
-    padding: 4px 0;
-  }
-
-  .typing { align-self: flex-start; display: flex; gap: 4px; padding: 12px 16px; }
-  .typing span {
-    width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim);
-    animation: bounce 1.4s infinite ease-in-out;
-  }
-  .typing span:nth-child(2) { animation-delay: 0.2s; }
-  .typing span:nth-child(3) { animation-delay: 0.4s; }
-  @keyframes bounce {
-    0%, 80%, 100% { transform: scale(0); }
-    40% { transform: scale(1); }
-  }
-
-  /* 输入区域 */
-  .input-area {
-    background: var(--surface);
-    border-top: 1px solid var(--border);
-    padding: 14px 20px;
-    display: flex;
-    gap: 10px;
-    flex-shrink: 0;
-  }
-  .input-area input {
-    flex: 1;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 14px;
-    color: var(--text);
-    font-size: 14px;
-    outline: none;
-    transition: border-color 0.2s;
-  }
-  .input-area input:focus { border-color: var(--primary); }
-  .input-area input::placeholder { color: var(--text-dim); }
-  .input-area button {
-    background: var(--primary);
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 20px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.2s;
-  }
-  .input-area button:hover { opacity: 0.85; }
-  .input-area button:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  /* 快捷指令 */
-  .quick-cmds {
-    padding: 8px 20px;
-    display: flex; gap: 8px; flex-wrap: wrap;
-    background: var(--surface);
-    border-top: 1px solid var(--border);
-  }
-  .quick-cmds button {
-    background: var(--tool-bg);
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    border-radius: 6px;
-    padding: 4px 10px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .quick-cmds button:hover { border-color: var(--primary); color: var(--primary); }
+  .input-area{background:var(--surface);border-top:1px solid var(--border);padding:14px 20px;display:flex;gap:10px;flex-shrink:0}
+  .input-area input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .input-area input:focus{border-color:var(--primary)}
+  .input-area input::placeholder{color:var(--text-dim)}
+  .input-area button{background:var(--primary);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer}
+  .input-area button:hover{opacity:.85}
+  .input-area button:disabled{opacity:.4;cursor:not-allowed}
 </style>
 </head>
 <body>
 
-<!-- 顶栏 -->
 <div class="header">
-  <h1><span class="icon">🚁</span>AI Agent 无人机操控</h1>
+  <h1>🚁 AI Agent 无人机操控</h1>
   <div class="status">
-    <span id="droneInfo">加载中...</span>
-    <span class="dot online" id="statusDot"></span>
-    <button class="stop-btn" id="stopBtn" onclick="emergencyStop()" title="紧急停止（不经过 AI 处理，直达无人机）">
-      ⏹ 急停
-    </button>
+    <span id="droneInfo">加载中...</span><span class="dot online"></span>
+    <button class="stop-btn" id="stopBtn" onclick="emergencyStop()">⏹ 急停</button>
   </div>
 </div>
 
-<!-- 聊天消息 -->
 <div class="chat" id="chat">
-  <div class="message agent">
-    👋 你好！我是 AI Agent Copilot。<br>
-    用自然语言给我下指令，比如：<br>
-    <code style="color:var(--primary);font-size:13px">
-    飞到 (31.03, 121.44) 高度 80m，录制 60 秒视频，然后返航
-    </code>
-  </div>
+  <div class="empty">👋 用自然语言操控无人机<br><span style="color:var(--primary)">"飞到陆家嘴，变焦 7x 拍照，返航"</span></div>
 </div>
 
-<!-- 快捷指令 -->
 <div class="quick-cmds" id="quickCmds">
-  <button data-cmd="查询当前状态">📡 查询状态</button>
-  <button data-cmd="飞到 (31.03, 121.44) 高度 80m，拍照 3 张，然后返航">🛫 飞行+拍照+返航</button>
-  <button data-cmd="飞到 (31.03, 121.44) 高度 80m，录制 60 秒视频，然后返航">🎥 飞行+录像+返航</button>
+  <button data-cmd="飞到陆家嘴，拍照 3 张，然后返航">🛫 飞行+拍照+返航</button>
+  <button data-cmd="飞到陆家嘴，变焦 7x，录制 60 秒视频，然后返航">🎥 飞行+录像+返航</button>
+  <button data-cmd="向前飞 700m，拍照">➡️ 相对飞行拍照</button>
   <button data-cmd="变焦到 7x，拍照">🔍 变焦拍照</button>
   <button data-cmd="切换到红外镜头，云台向下，全景拍照">🌡️ 红外全景</button>
-  <button data-cmd="查询相机状态">📷 相机状态</button>
 </div>
 
-<!-- 输入区域 -->
 <div class="input-area">
-  <input type="text" id="userInput" placeholder="输入自然语言指令，例如：飞到 (31.03, 121.44) 高度 80m，拍照 3 张"
-         autocomplete="off">
+  <input type="text" id="userInput" placeholder="输入指令，如：飞到陆家嘴，拍照，返航" autocomplete="off">
   <button id="sendBtn" onclick="sendMessage()">发送</button>
 </div>
 
 <script>
-// ── 状态 ────────────────────────────────────────
 let isStreaming = false;
-let abortController = null;
 let isEmergencyStopped = false;
+let abortController = null;
+let currentPlanCard = null;
 
-// ── DOM 引用 ─────────────────────────────────────
-const chat     = document.getElementById('chat');
-const input    = document.getElementById('userInput');
-const sendBtn  = document.getElementById('sendBtn');
-const stopBtn  = document.getElementById('stopBtn');
-const droneInfo = document.getElementById('droneInfo');
+const chat=document.getElementById('chat'),input=document.getElementById('userInput'),
+  sendBtn=document.getElementById('sendBtn'),stopBtn=document.getElementById('stopBtn'),
+  droneInfo=document.getElementById('droneInfo');
 
-// ── 工具函数 ─────────────────────────────────────
+function scrollBottom(){chat.scrollTop=chat.scrollHeight}
+function escapeHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+function addMsg(type,html){const d=document.createElement('div');d.className='msg '+type;d.innerHTML=html;chat.appendChild(d);scrollBottom();return d}
 
-function scrollBottom() {
-  chat.scrollTop = chat.scrollHeight;
+// ── 紧急停止 ──
+async function emergencyStop(){
+  if(!isStreaming&&!isEmergencyStopped)return;
+  if(abortController){abortController.abort();abortController=null}
+  try{await fetch('/api/agent/stop',{method:'POST'})}catch(e){}
+  isEmergencyStopped=true;isStreaming=false;stopBtn.disabled=true;stopBtn.textContent='⏹ 已急停';
+  sendBtn.disabled=false;input.disabled=false;
+  if(currentPlanCard)currentPlanCard.querySelectorAll('.btn-cancel,.btn-execute').forEach(b=>b.disabled=true);
+  addMsg('stop','⛔ <b>紧急停止：无人机已原地悬停，所有任务已终止</b><br><span style="font-size:12px;color:#f87171">急停指令直达无人机，不经过 AI 处理</span>');
+  const d=document.createElement('div');d.className='session-divider';d.textContent='急停 · 会话结束 —— 下一轮为新会话';chat.appendChild(d);scrollBottom();
+  setTimeout(fetchStatus,500)
 }
 
-function addMessage(type, content) {
-  const div = document.createElement('div');
-  div.className = 'message ' + type;
-  div.innerHTML = content;
-  chat.appendChild(div);
-  scrollBottom();
+// ── 状态轮询 ──
+async function fetchStatus(){
+  try{const r=await fetch('/api/agent/status');const d=await r.json();const l=d.status.split('\n');const b=l.find(x=>x.includes('电量'));droneInfo.textContent=b?b.trim():d.device_id}catch(e){}
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
+// ── Phase 1: 生成规划 ──
+async function sendMessage(){
+  const msg=input.value.trim();
+  if(!msg||isStreaming)return;
+  input.value='';isEmergencyStopped=false;stopBtn.disabled=false;stopBtn.textContent='⏹ 急停';
+  try{await fetch('/api/agent/reset',{method:'POST'})}catch(e){}
 
-function addTyping() {
-  const div = document.createElement('div');
-  div.className = 'typing';
-  div.id = 'typingIndicator';
-  div.innerHTML = '<span></span><span></span><span></span>';
-  chat.appendChild(div);
-  scrollBottom();
-}
+  const wasStopped=isEmergencyStopped;isEmergencyStopped=false;
+  if(wasStopped){const d=document.createElement('div');d.className='session-divider';d.textContent='新会话';chat.appendChild(d)}
 
-function removeTyping() {
-  const el = document.getElementById('typingIndicator');
-  if (el) el.remove();
-}
+  // 移除欢迎语
+  const empty=chat.querySelector('.empty');if(empty)empty.remove();
 
-function setLoading(loading) {
-  isStreaming = loading;
-  sendBtn.disabled = loading;
-  input.disabled = loading;
-  if (loading) {
-    addTyping();
-  } else {
-    removeTyping();
-  }
-}
+  addMsg('user',escapeHtml(msg));
+  isStreaming=true;sendBtn.disabled=true;input.disabled=true;
 
-// ── 紧急停止 ─────────────────────────────────────
-
-async function emergencyStop() {
-  if (!isStreaming && !isEmergencyStopped) {
-    // 没有正在执行的任务
-    addMessage('system', 'ℹ️ 当前没有正在执行的任务');
-    return;
-  }
-
-  // 1. 关闭当前 SSE 连接（中断 Agent 输出流）
-  if (abortController) {
-    abortController.abort();
-    abortController = null;
-  }
-
-  // 2. 通知后端设置停止标志（Demo 模拟链路）
-  try {
-    await fetch('/api/agent/stop', { method: 'POST' });
-  } catch (e) { /* 忽略网络错误 */ }
-
-  // 3. UI 反馈
-  isEmergencyStopped = true;
-  setLoading(false);
-  stopBtn.disabled = true;
-  stopBtn.textContent = '⏹ 已急停';
-
-  addMessage('stop-notice',
-    '⛔ <b>紧急停止：无人机已原地悬停，所有任务已终止</b><br>' +
-    '<span style="font-size:12px;color:#f87171">急停指令直达无人机，不经过 AI 处理</span>'
-  );
-
-  // 插入会话分隔线
-  const divider = document.createElement('div');
-  divider.className = 'session-divider';
-  divider.textContent = '急停 · 会话结束 —— 下一轮为新会话';
-  chat.appendChild(divider);
-  scrollBottom();
-
-  // 刷新设备状态
-  setTimeout(fetchDroneStatus, 500);
-}
-
-// ── SSE 流式请求 ─────────────────────────────────
-
-async function sendMessage() {
-  const message = input.value.trim();
-  if (!message || isStreaming) return;
-
-  input.value = '';
-  stopBtn.disabled = false;
-  stopBtn.textContent = '⏹ 急停';
-
-  try { await fetch('/api/agent/reset', { method: 'POST' }); } catch (e) {}
-
-  // 急停后的第一条消息：插入新会话分隔线
-  const wasStopped = isEmergencyStopped;
-  isEmergencyStopped = false;
-  if (wasStopped) {
-    const divider = document.createElement('div');
-    divider.className = 'session-divider';
-    divider.textContent = '新会话';
-    chat.appendChild(divider);
-  }
-
-  addMessage('user', escapeHtml(message));
-  setLoading(true);
-
-  abortController = new AbortController();
-
-  try {
-    const response = await fetch('/api/agent/chat/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
-      signal: abortController.signal,
+  try{
+    const resp=await fetch('/api/agent/plan',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:msg})
     });
+    if(!resp.ok){const e=await resp.json();throw new Error(e.detail||'规划失败')}
+    const data=await resp.json();
+    renderPlanCard(data.plan);
+  }catch(e){
+    addMsg('error','❌ '+escapeHtml(e.message));
+    isStreaming=false;sendBtn.disabled=false;input.disabled=false;
+  }
+}
 
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || '请求失败');
-    }
+// ── 渲染规划卡片 ──
+function renderPlanCard(plan){
+  const steps=plan.steps||[];
+  const preflight=plan.preflight||{};
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+  let stepsHtml='';
+  steps.forEach((s,i)=>{
+    stepsHtml+=`<div class="step" id="step-${i}">
+      <div class="step-icon pending">○</div>
+      <div class="step-desc">${i+1}. ${escapeHtml(s.description)}</div>
+      <div class="step-result"></div>
+    </div>`;
+  });
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+  const card=document.createElement('div');
+  card.className='plan-card';
+  card.innerHTML=`
+    <div class="plan-header"><span class="icon">📋</span><h3>任务规划</h3></div>
+    <div class="plan-body">
+      <div class="objective">🎯 ${escapeHtml(plan.objective)}</div>
+      <div class="steps-title">执行动作 (${steps.length})</div>
+      ${stepsHtml}
+      <div class="preflight">
+        ⚠️ 飞前检查：<span>最低返航高度: ${escapeHtml(preflight.return_altitude||'100m')}</span><span>失联动作: ${escapeHtml(preflight.lost_action||'返航')}</span>
+      </div>
+    </div>
+    <div class="plan-actions">
+      <button class="btn-cancel" onclick="cancelPlan(this)">取消</button>
+      <button class="btn-execute" onclick="executePlan(this,'${escapeHtml(JSON.stringify(plan))}')">立即执行</button>
+    </div>`;
+  chat.appendChild(card);
+  currentPlanCard=card;
+  scrollBottom();
+}
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+// ── 取消规划 ──
+function cancelPlan(btn){
+  btn.disabled=true;
+  btn.parentElement.querySelector('.btn-execute').disabled=true;
+  addMsg('agent','⏹ 已取消');
+  isStreaming=false;sendBtn.disabled=false;input.disabled=false;
+}
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6);
+// ── Phase 3: 执行规划 ──
+async function executePlan(btn,planStr){
+  btn.disabled=true;
+  btn.parentElement.querySelector('.btn-cancel').disabled=true;
 
-        removeTyping();
+  // 更新按钮文案
+  btn.textContent='执行中...';
 
-        try {
-          const event = JSON.parse(data);
-          handleSSEEvent(event);
-        } catch (e) {
-          console.warn('SSE parse error:', e, data);
-        }
+  const plan=JSON.parse(planStr);
+  const steps=plan.steps||[];
+  const total=steps.length;
+  abortController=new AbortController();
+
+  try{
+    const resp=await fetch('/api/agent/execute',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:planStr}),
+      signal:abortController.signal
+    });
+    if(!resp.ok){const e=await resp.json();throw new Error(e.detail||'执行失败')}
+
+    const reader=resp.body.getReader();
+    const decoder=new TextDecoder();
+    let buf='';
+
+    while(true){
+      const{ done,value}=await reader.read();
+      if(done)break;
+      buf+=decoder.decode(value,{stream:true});
+      const lines=buf.split('\n');buf=lines.pop()||'';
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        try{
+          const evt=JSON.parse(line.slice(6));
+          handleStepEvent(evt,steps);
+        }catch(e){}
       }
     }
-  } catch (e) {
-    removeTyping();
-    if (e.name === 'AbortError') {
-      // SSE 被急停关闭，不显示错误
-    } else {
-      addMessage('error', '❌ ' + escapeHtml(e.message));
+  }catch(e){
+    if(e.name!=='AbortError')addMsg('error','❌ '+escapeHtml(e.message))
+  }finally{
+    isStreaming=false;sendBtn.disabled=false;input.disabled=false;
+    abortController=null;btn.textContent='已完成';
+    fetchStatus()
+  }
+}
+
+function handleStepEvent(evt,steps){
+  const card=currentPlanCard;
+  if(!card)return;
+
+  if(evt.type==='step_start'){
+    const el=document.getElementById('step-'+evt.index);
+    if(el){
+      const icon=el.querySelector('.step-icon');
+      icon.className='step-icon running';icon.textContent='◐';
+      el.scrollIntoView({behavior:'smooth',block:'center'});
     }
-  } finally {
-    setLoading(false);
-    abortController = null;
-    if (!isEmergencyStopped) {
-      stopBtn.disabled = true;
+  }else if(evt.type==='step_done'){
+    const el=document.getElementById('step-'+evt.index);
+    if(el){
+      const icon=el.querySelector('.step-icon');
+      icon.className='step-icon done';icon.textContent='✓';
+      const result=el.querySelector('.step-result');
+      if(result)result.textContent=evt.result.replace(/^✅\s*/,'').substring(0,60);
     }
-    fetchDroneStatus();
+  }else if(evt.type==='step_error'){
+    const el=document.getElementById('step-'+evt.index);
+    if(el){
+      const icon=el.querySelector('.step-icon');
+      icon.className='step-icon fail';icon.textContent='✗';
+      const result=el.querySelector('.step-result');
+      if(result){result.style.color='var(--danger)';result.textContent=evt.error.substring(0,60)}
+    }
+  }else if(evt.type==='all_done'){
+    addMsg('agent','✅ '+escapeHtml(evt.summary||'任务执行完成'));
+    const btns=card.querySelectorAll('button');btns.forEach(b=>b.disabled=true);
+    scrollBottom()
   }
 }
 
-function handleSSEEvent(event) {
-  switch (event.type) {
-    case 'action':
-      const div = document.createElement('div');
-      div.className = 'message tool';
-      div.id = 'tool-' + Date.now();
-      div.innerHTML = `<div class="tool-name">🔧 ${event.tool}</div>
-                       <div class="tool-input">参数: ${escapeHtml(event.input)}</div>
-                       <div class="tool-output" style="color:var(--warning)">⏳ 执行中...</div>`;
-      chat.appendChild(div);
-      div.dataset.pending = 'true';
-      document.querySelectorAll('.message.tool[data-pending]').forEach(el => {
-        if (el !== div) delete el.dataset.pending;
-      });
-      scrollBottom();
-      break;
-
-    case 'tool_result':
-      const pending = document.querySelector('.message.tool[data-pending]');
-      if (pending) {
-        const outputEl = pending.querySelector('.tool-output');
-        if (outputEl) {
-          const isStop = event.output.includes('[EMERGENCY_STOP]');
-          outputEl.style.color = isStop ? 'var(--danger)' : 'var(--success)';
-          outputEl.textContent = event.output;
-        }
-        delete pending.dataset.pending;
-      } else {
-        addMessage('agent', escapeHtml(event.output));
-      }
-      scrollBottom();
-      break;
-
-    case 'finish':
-      addMessage('agent', escapeHtml(event.output));
-      scrollBottom();
-      break;
-
-    case 'error':
-      addMessage('error', '❌ ' + escapeHtml(event.message));
-      scrollBottom();
-      break;
-  }
-}
-
-// ── 状态轮询 ─────────────────────────────────────
-
-async function fetchDroneStatus() {
-  try {
-    const resp = await fetch('/api/agent/status');
-    const data = await resp.json();
-    const lines = data.status.split('\n');
-    const battery = lines.find(l => l.includes('电量'));
-    droneInfo.textContent = battery ? battery.trim() : data.device_id;
-  } catch (e) {}
-}
-
-// ── 初始化 ─────────────────────────────────────
-
-input.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
-
-document.getElementById('quickCmds').addEventListener('click', (e) => {
-  if (e.target.tagName === 'BUTTON') {
-    input.value = e.target.dataset.cmd;
-    sendMessage();
-  }
-});
-
-fetchDroneStatus();
-setInterval(fetchDroneStatus, 15000);
+// ── 初始化 ──
+input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
+document.getElementById('quickCmds').addEventListener('click',e=>{if(e.target.tagName==='BUTTON'){input.value=e.target.dataset.cmd;sendMessage()}});
+fetchStatus();setInterval(fetchStatus,15000);
 </script>
 </body>
 </html>
