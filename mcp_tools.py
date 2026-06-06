@@ -37,20 +37,22 @@ async def load_amap_tools(api_key: Optional[str] = None):
     连接高德 MCP Server，获取地理编码等工具，转换为 LangChain BaseTool。
 
     MCP Server 提供的工具体系:
-    - 地理编码（地址→坐标）: "紫竹高新区5号楼" → (31.03, 121.44)
-    - 逆地理编码（坐标→地址）: (31.03, 121.44) → "上海市闵行区..."
-    - POI 搜索: "附近的消防栓"、"陆家嘴附近的派出所"
-    - 路径规划: 驾车/步行/骑行路线
-    - 周边搜索: 指定位置周边设施
+    - maps_geo（地理编码）: "紫竹高新区5号楼" → (31.03, 121.44)  ← 最核心
+    - maps_regeocode（逆地理编码）: (31.03, 121.44) → "上海市闵行区..."
+    - maps_text_search（POI 搜索）: "附近的消防栓"
+    - maps_around_search（周边搜索）: 指定位置周边设施
+    - maps_direction_*（路径规划）: 驾车/步行/骑行/公交
+    - maps_weather（天气查询）: 指定城市天气
 
     使用方式:
       tools, client = await load_amap_tools("your-key")
-      ALL_TOOLS.extend(tools)  # 注册到 Agent
+      ALL_TOOLS.extend(tools)
+      # 注意: client 需要保持存活，否则 MCP 连接断开工具不可用
 
     Args:
         api_key: 高德开放平台 API Key（或设置环境变量 AMAP_API_KEY）
     Returns:
-        (工具列表, MCP 客户端实例)
+        (工具列表, MCP 客户端实例 — 必须在 Agent 生命周期内保持存活)
     """
     if not _MCP_AVAILABLE:
         raise RuntimeError("langchain-mcp-adapters 未安装")
@@ -62,6 +64,8 @@ async def load_amap_tools(api_key: Optional[str] = None):
             "申请地址: https://console.amap.com/dev/key/app"
         )
 
+    # MultiServerMCPClient 作为 context manager 进入，
+    # 建立 StreamableHTTP 连接并完成 MCP 握手（initialize → tools/list）
     client = MultiServerMCPClient({
         "amap": {
             "transport": "streamable_http",
@@ -69,6 +73,7 @@ async def load_amap_tools(api_key: Optional[str] = None):
         }
     })
 
+    await client.__aenter__()
     tools = client.get_tools()
 
     logger.info("📡 高德 MCP 工具: %d 个", len(tools))
