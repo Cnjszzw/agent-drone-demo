@@ -50,6 +50,23 @@
   }
   .header .status .dot { width: 8px; height: 8px; border-radius: 50%; }
   .header .status .dot.online { background: var(--success); }
+  .stop-btn {
+    background: #dc2626; color: #fff;
+    border: none; border-radius: 8px;
+    padding: 8px 16px; font-size: 13px; font-weight: 700;
+    cursor: pointer; transition: all 0.2s;
+    letter-spacing: 0.5px;
+  }
+  .stop-btn:hover { background: #b91c1c; box-shadow: 0 0 12px rgba(220,38,38,0.4); }
+  .stop-btn:disabled { opacity: 0.3; cursor: not-allowed; box-shadow: none; }
+  .message.stop-notice {
+    align-self: center;
+    background: #2d1215;
+    border: 2px solid #dc2626;
+    color: #fca5a5;
+    font-size: 14px; font-weight: 600;
+    text-align: center; max-width: 100%;
+  }
 
   /* 聊天区域 */
   .chat {
@@ -191,6 +208,9 @@
   <div class="status">
     <span id="droneInfo">加载中...</span>
     <span class="dot online" id="statusDot"></span>
+    <button class="stop-btn" id="stopBtn" onclick="emergencyStop()" title="紧急停止（不经过 AI 处理，直达无人机）">
+      ⏹ 急停
+    </button>
   </div>
 </div>
 
@@ -223,11 +243,14 @@
 <script>
 // ── 状态 ────────────────────────────────────────
 let isStreaming = false;
+let abortController = null;
+let isEmergencyStopped = false;
 
 // ── DOM 引用 ─────────────────────────────────────
 const chat     = document.getElementById('chat');
 const input    = document.getElementById('userInput');
 const sendBtn  = document.getElementById('sendBtn');
+const stopBtn  = document.getElementById('stopBtn');
 const droneInfo = document.getElementById('droneInfo');
 
 // ── 工具函数 ─────────────────────────────────────
@@ -244,15 +267,10 @@ function addMessage(type, content) {
   scrollBottom();
 }
 
-function addToolMessage(toolName, toolInput, output) {
+function escapeHtml(text) {
   const div = document.createElement('div');
-  div.className = 'message tool';
-  let html = `<div class="tool-name">🔧 ${toolName}</div>`;
-  if (toolInput) html += `<div class="tool-input">参数: ${escapeHtml(toolInput)}</div>`;
-  html += `<div class="tool-output">${escapeHtml(output)}</div>`;
-  div.innerHTML = html;
-  chat.appendChild(div);
-  scrollBottom();
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 function addTyping() {
@@ -269,12 +287,6 @@ function removeTyping() {
   if (el) el.remove();
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
 function setLoading(loading) {
   isStreaming = loading;
   sendBtn.disabled = loading;
@@ -286,6 +298,41 @@ function setLoading(loading) {
   }
 }
 
+// ── 紧急停止 ─────────────────────────────────────
+
+async function emergencyStop() {
+  if (!isStreaming && !isEmergencyStopped) {
+    // 没有正在执行的任务
+    addMessage('system', 'ℹ️ 当前没有正在执行的任务');
+    return;
+  }
+
+  // 1. 关闭当前 SSE 连接（中断 Agent 输出流）
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+
+  // 2. 通知后端设置停止标志（Demo 模拟链路）
+  try {
+    await fetch('/api/agent/stop', { method: 'POST' });
+  } catch (e) { /* 忽略网络错误 */ }
+
+  // 3. UI 反馈
+  isEmergencyStopped = true;
+  setLoading(false);
+  stopBtn.disabled = true;
+  stopBtn.textContent = '⏹ 已急停';
+
+  addMessage('stop-notice',
+    '⛔ <b>紧急停止：无人机已原地悬停，所有任务已终止</b><br>' +
+    '<span style="font-size:12px;color:#f87171">急停指令直达无人机，不经过 AI 处理</span>'
+  );
+
+  // 刷��设备状态
+  setTimeout(fetchDroneStatus, 500);
+}
+
 // ── SSE 流式请求 ─────────────────────────────────
 
 async function sendMessage() {
@@ -293,14 +340,24 @@ async function sendMessage() {
   if (!message || isStreaming) return;
 
   input.value = '';
+  isEmergencyStopped = false;
+  stopBtn.disabled = false;
+  stopBtn.textContent = '⏹ 急停';
+
+  // 重置停止标志（新会话）
+  try { await fetch('/api/agent/reset', { method: 'POST' }); } catch (e) {}
+
   addMessage('user', escapeHtml(message));
   setLoading(true);
+
+  abortController = new AbortController();
 
   try {
     const response = await fetch('/api/agent/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
+      signal: abortController.signal,
     });
 
     if (!response.ok) {
@@ -318,13 +375,12 @@ async function sendMessage() {
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
-      buffer = lines.pop() || '';  // 保留不完整行
+      buffer = lines.pop() || '';
 
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         const data = line.slice(6);
 
-        // 移除打字指示器（第一条真实消息到达时）
         removeTyping();
 
         try {
@@ -337,17 +393,24 @@ async function sendMessage() {
     }
   } catch (e) {
     removeTyping();
-    addMessage('error', '❌ ' + escapeHtml(e.message));
+    if (e.name === 'AbortError') {
+      // SSE 被急停关闭，不显示错误
+    } else {
+      addMessage('error', '❌ ' + escapeHtml(e.message));
+    }
   } finally {
     setLoading(false);
-    fetchDroneStatus();  // 刷新状态
+    abortController = null;
+    if (!isEmergencyStopped) {
+      stopBtn.disabled = true;
+    }
+    fetchDroneStatus();
   }
 }
 
 function handleSSEEvent(event) {
   switch (event.type) {
     case 'action':
-      // 工具调用开始 — 创建一个待填充的 tool 消息
       const div = document.createElement('div');
       div.className = 'message tool';
       div.id = 'tool-' + Date.now();
@@ -355,9 +418,7 @@ function handleSSEEvent(event) {
                        <div class="tool-input">参数: ${escapeHtml(event.input)}</div>
                        <div class="tool-output" style="color:var(--warning)">⏳ 执行中...</div>`;
       chat.appendChild(div);
-      // 记录最后一个 tool 消息的 id，供 tool_result 更新
       div.dataset.pending = 'true';
-      // 把之前 pending 的标记清除
       document.querySelectorAll('.message.tool[data-pending]').forEach(el => {
         if (el !== div) delete el.dataset.pending;
       });
@@ -365,17 +426,17 @@ function handleSSEEvent(event) {
       break;
 
     case 'tool_result':
-      // 更新最后一个 pending 的 tool 消息
       const pending = document.querySelector('.message.tool[data-pending]');
       if (pending) {
         const outputEl = pending.querySelector('.tool-output');
         if (outputEl) {
-          outputEl.style.color = 'var(--success)';
+          const isStop = event.output.includes('[EMERGENCY_STOP]');
+          outputEl.style.color = isStop ? 'var(--danger)' : 'var(--success)';
           outputEl.textContent = event.output;
         }
         delete pending.dataset.pending;
       } else {
-        addToolMessage('', '', event.output);
+        addMessage('agent', escapeHtml(event.output));
       }
       scrollBottom();
       break;
@@ -401,9 +462,7 @@ async function fetchDroneStatus() {
     const lines = data.status.split('\n');
     const battery = lines.find(l => l.includes('电量'));
     droneInfo.textContent = battery ? battery.trim() : data.device_id;
-  } catch (e) {
-    // ignore
-  }
+  } catch (e) {}
 }
 
 // ── 初始化 ─────────────────────────────────────

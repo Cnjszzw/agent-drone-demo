@@ -33,6 +33,7 @@ import random
 import uuid
 import threading
 from dataclasses import dataclass, field
+from typing import Optional
 
 
 @dataclass
@@ -55,6 +56,26 @@ class MockExecutor:
       # → b'{"status":"in_progress","progress":60,"eta_seconds":50}'
     """
 
+    # 紧急停止标志（类级别，所有实例共享）
+    # 生产环境: redis.set("agent:session:emergency_stop", "1")
+    # 急停链路: 前端按钮 → Java /api/drone/emergency_stop → MQTT 直达无人机
+    #          前端同时关闭 SSE 连接，Agent 会话自然终止
+    _emergency_stop = False
+
+    @classmethod
+    def trigger_emergency_stop(cls):
+        """触发紧急停止"""
+        cls._emergency_stop = True
+
+    @classmethod
+    def reset_emergency_stop(cls):
+        """重置停止标志（新会话开始时）"""
+        cls._emergency_stop = False
+
+    @classmethod
+    def is_emergency_stopped(cls) -> bool:
+        return cls._emergency_stop
+
     def __init__(self, device_id: str, home_lat: float, home_lng: float, battery: int):
         self.device_id = device_id
         self.home_lat = home_lat
@@ -73,7 +94,7 @@ class MockExecutor:
 
     # ==================== Redis 模拟接口 ====================
 
-    def _mock_redis_get(self, task_id: str) -> _MockTaskState | None:
+    def _mock_redis_get(self, task_id: str) -> Optional[_MockTaskState]:
         """
         模拟: redis.get(f"drone:task:{task_id}:status")
         生产环境: redis-py → GET drone:task:T001:status → <1ms
@@ -177,6 +198,11 @@ class MockExecutor:
         max_wait = 30  # Demo 最多等 30s（生产环境改为 180）
         for poll_count in range(1, max_wait + 1):
             time.sleep(1)
+
+            # 检查紧急停止标志（急停走独立硬件通道，Agent 仅感知）
+            if MockExecutor.is_emergency_stopped():
+                print()
+                return "⛔ [EMERGENCY_STOP] 紧急停止：无人机已原地悬停，所有任务终止"
 
             # ── 生产环境替换为 ──
             # raw = redis.get(f"drone:task:{task_id}:status")

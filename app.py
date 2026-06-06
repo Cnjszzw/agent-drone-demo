@@ -27,6 +27,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from config import llm_config, drone_config
 from agent import create_agent
 from tools import set_confirm_handler, set_notify_handler, executor
+from executor import MockExecutor
 
 # ── 日志 ──────────────────────────────────────────
 
@@ -135,6 +136,32 @@ def get_status():
         device_id=drone_config.device_id,
         status=executor.get_status(),
     )
+
+
+@app.post("/api/agent/stop")
+def emergency_stop():
+    """
+    紧急停止 —— 不经过 Agent、不经过 LLM。
+
+    生产环境实际链路:
+      前端急停按钮 → Java /api/drone/emergency_stop → MQTT 直达无人机
+      同时前端关闭当前 SSE 连接，旧 Agent 会话自然终止。
+
+    此端点仅用于 Demo 中通知执行器停止正在进行的模拟任务。
+    """
+    MockExecutor.trigger_emergency_stop()
+    logger.warning("⛔ 紧急停止已触发：无人机原地悬停，所有任务终止")
+    return {
+        "success": True,
+        "message": "紧急停止：无人机已原地悬停，所有任务终止",
+    }
+
+
+@app.post("/api/agent/reset")
+def reset_stop():
+    """重置紧急停止标志（新会话开始时调用）"""
+    MockExecutor.reset_emergency_stop()
+    return {"success": True, "message": "停止标志已重置"}
 
 
 @app.post("/api/agent/chat")
