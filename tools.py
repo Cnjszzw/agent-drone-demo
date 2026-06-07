@@ -107,12 +107,15 @@ def fly_to_point(lat: float, lng: float, height: float) -> str:
     """
     logger.info("🛫 飞行指令: (%.6f, %.6f) 高度 %.0fm", lat, lng, height)
 
-    # 1. SafetyGate 校验（硬编码，不经过 LLM）
-    result = safety_gate.validate_fly(lat, lng, height)
-    if not result.passed:
-        return f"❌ 飞行指令被拒绝: {result.reason}"
-    if result.warning:
-        logger.warning("⚠️ %s", result.reason)
+    # 1. 硬编码调用后端已有的飞行安全校验（不经过 LLM）
+    #    生产环境: POST /api/drone/preflight/check → Java 校验限高/限远/禁飞区
+    #    校验逻辑复用现有手动操控的安全层，Agent 不另起炉灶
+    #    校验失败直接拒绝，不调用 LLM 重试
+    preflight = safety_gate.validate_fly(lat, lng, height)
+    if not preflight.passed:
+        return f"❌ 飞行指令被拒绝: {preflight.reason}"
+    if preflight.warning:
+        logger.warning("⚠️ %s", preflight.reason)
 
     # 2. 通知前端画预览线和目标点（硬编码 —— 曾经是独立 Tool，后因 LLM 漏调下沉至此）
     _notify("flight_preview", {

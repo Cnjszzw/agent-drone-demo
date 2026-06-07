@@ -162,20 +162,24 @@ class MockExecutor:
     def fly_to_point(self, lat: float, lng: float, height: float,
                      on_progress=None) -> str:
         """
-        指点飞行 —— 内部封装 Redis 轮询等待。
+        指点飞行 —— 内部封装 Redis 轮询等待 + 动态超时 + OSD 兜底。
 
         生产环境实际流程:
-          1. POST /api/drone/control/fly → Java 下发 MQTT → 返回 task_id
-          2. 嵌入式 → MQTT 进度消息 → Java 消费 → 写入 Redis
-          3. Python redis-py: GET drone:task:{task_id}:status（1s 间隔）
-          4. 进度仅推前端展示 → LLM 不感知中间状态
-          5. status=completed/failed 时返回结果给 LLM
+          1. 计算预估飞行时间（距离 / 平均速度），超时 = 预估 × 1.5
+          2. POST /api/drone/control/fly → Java 下发 MQTT → 返回 task_id
+          3. 每秒 redis.get(f"drone:task:{task_id}:status") 轮询
+          4. 进度仅推前端，LLM 不感知中间状态
+          5. 如果在预估时间内未完成 → 不直接报失败
+             → 查 Redis OSD 实际位置: 是否距目标点 < 5m?
+               是 → 判定到达（通信延迟导致的状态更新滞后）
+               否 → 位置有变化(在飞) → 延长超时继续等
+               否 → 位置无变化(没飞) → 判定硬件故障
+          6. status=completed 或 OSD 确认到达 → 返回成功给 LLM
 
-        轮询参数:
-          间隔: 1s（对 2-3 分钟飞行，60-180 次 GET，localhost Redis 零负载）
-          超时: 180s（3 分钟，超过则判定异常）
-
-        LLM 视角: fly_to_point() = 一次函数调用。返回 = 到达/失败/超时。
+        面试重点:
+          - 超时不是写死的固定值，是根据距离动态计算
+          - 超时不等于失败——先查 OSD 实际位置再判断
+          - Agent 认为失败 ≠ 物理世界停止：这是无人机 Agent 独有的难点
         """
         task_id = self._msg_id()
 
@@ -187,65 +191,68 @@ class MockExecutor:
         )
         self._print_mqtt(topic, payload)
 
-        # 2. 初始化模拟 Redis 状态
-        flight_seconds = 3 + random.randint(0, 3)  # Demo 加速: 3-6s
-        # 生产环境: 真实飞行时间 60-180s，由硬件决定
-        self._mock_redis_set(task_id, _MockTaskState(
-            task_id=task_id,
-            status="started",
-            progress=0,
-            eta_seconds=flight_seconds,
-        ))
+        # 2. 动态计算超时（基于预估距离 / 速度）
+        #    生产环境: distance = haversine(current, target); eta = distance / avg_speed
+        #    超时 = eta × 1.5（留 50% 余量给逆风/绕飞）
+        flight_seconds = 3 + random.randint(0, 3)  # Demo 加速
+        timeout = max(flight_seconds * 2, 10)       # 最少 10s
 
-        # 3. 启动后台模拟进度更新
-        #    生产环境: 嵌入式硬件 → MQTT → Java → Redis（无需此行代码）
+        self._mock_redis_set(task_id, _MockTaskState(
+            task_id=task_id, status="started",
+            progress=0, eta_seconds=flight_seconds,
+        ))
         self._start_progress_simulation(task_id, flight_seconds)
 
-        # 4. 轮询 Redis 等待到达
-        #    生产环境: while True: state = redis.get(...)
-        max_wait = 30  # Demo 最多等 30s（生产环境改为 180）
-        for poll_count in range(1, max_wait + 1):
+        # 3. 轮询 Redis 等待到达
+        for poll_count in range(1, timeout + 1):
             time.sleep(1)
 
-            # 检查紧急停止标志（急停走独立硬件通道，Agent 仅感知）
             if MockExecutor.is_emergency_stopped():
                 print()
                 return "⛔ [EMERGENCY_STOP] 紧急停止：无人机已原地悬停，所有任务终止"
 
-            # ── 生产环境替换为 ──
-            # raw = redis.get(f"drone:task:{task_id}:status")
-            # state = json.loads(raw) if raw else None
             state = self._mock_redis_get(task_id)
-
             if state is None:
                 return f"❌ [task:{task_id}] 任务状态丢失，请重试"
 
             if state.status == "completed":
-                # 更新本地模拟状态
-                self.current_lat = lat
-                self.current_lng = lng
+                # 到达
+                self.current_lat = lat; self.current_lng = lng
                 self.current_height = height
                 self.battery -= 5 + random.randint(0, 10)
-
                 return (f"✅ [task:{task_id}] 已到达目标点 ({lat:.6f}, {lng:.6f})，"
                         f"高度 {height:.1f}m，电量 {max(0, self.battery)}%")
 
             if state.status == "failed":
                 return f"❌ [task:{task_id}] {state.error}"
 
-            # 进度推前端展示（不推 LLM）
+            # 进度推前端（不推 LLM）
             if on_progress:
                 on_progress(task_id, state.progress, state.status)
 
-            # 终端日志（生产环境去掉，进度走前端）
             eta_str = f"ETA:{state.eta_seconds}s" if state.eta_seconds else ""
             print(f"\r  ⏳ [{poll_count}s] 轮询 Redis: "
                   f"status={state.status} progress={state.progress}% {eta_str}",
                   end="", flush=True)
 
-        # 超时
+        # 4. 超时！不直接宣告失败——先查 OSD 实际位置兜底
         print()
-        return f"❌ [task:{task_id}] 飞行超时（{max_wait}s），请检查无人机状态"
+        # ── 生产环境 ──
+        # osd = redis.get(f"drone:osd:{device_id}:position")
+        # if osd and distance_to_target(osd.lat, osd.lng, lat, lng) < 5:
+        #     return "✅ 已到达目标点（OSD 位置确认，通信延迟导致状态更新滞后）"
+        # if osd and position_changed(osd):
+        #     continue_polling()  # 在飞但没更新状态，延长等待
+        # return "❌ 飞行超时，硬件未响应。已自动悬停，请手动接管"
+
+        # Demo 简化: 随机模拟 OSD 确认成功 / 真超时
+        if random.random() < 0.6:
+            self.current_lat = lat; self.current_lng = lng
+            self.current_height = height
+            return (f"✅ [task:{task_id}] 已到达目标点（OSD 位置确认，"
+                    f"通信延迟导致 Redis 状态更新滞后）")
+        return (f"❌ [task:{task_id}] 飞行超时（{timeout}s），"
+                f"硬件未响应。当前位置未知，请手动检查 OSD 后重试")
 
     # ==================== 录像控制 ====================
 
