@@ -1027,6 +1027,30 @@ LangGraph:     approach → start_record 固定边
                录像时长 = 精确等于一圈环绕时间
 ```
 
+#### 角度怎么感知、每 30 度怎么触发
+
+面试时一定会被追问细节。核心机制很简单：
+
+**角度计算**：无人机当前位置 (lat1, lng1) 和圆心（信号塔）(lat0, lng0)，用 atan2 计算方位角（0-360 度）。
+
+**每 30 度触发**：`orbit_loop` 节点内部每秒从 Redis OSD 轮询一次无人机位置，实时计算角度。发现跨过 30 度的整数倍（如 29° -> 31°）就调用一次 `take_photo`。满 360 度时触发条件边退出。
+
+```
+orbit_loop 内部逻辑:
+  1. redis.get(osd_position)   # 每秒查一次
+  2. angle = atan2(lat-lat0, lng-lng0)
+  3. if angle - last_trigger_angle >= 30:
+         take_photo()
+         last_trigger_angle = angle
+  4. if angle >= 360:
+         return → 条件边路由到 exit_orbit
+  5. sleep(1) → 回到步骤 1
+```
+
+无人机环绕速度由硬件控制（如 3m/s），绕 80m 半径圆大约 167 秒一圈。每 30 度约 14 秒。1 秒轮询一次的粒度足够精确。
+
+**LangGraph 在这里的价值不是"能干 while 循环做不到的事"，而是当系统有多种子流程（环绕/航线/返航），各自有分支和条件时，用图表达比用 if-else 堆在工具函数里更清晰。加上 `interrupt()` 机制可以在急停时把整个子图挂起——普通 while 循环做不到。**
+
 #### 为什么不全换 LangGraph
 
 ```
